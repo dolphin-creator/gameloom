@@ -17,6 +17,7 @@ export default defineConfig({
       input: {
         'index.html': 'index.html',
         'temple.html': 'temple.html',
+        'ruins.html': 'ruins.html',
       },
     },
   },

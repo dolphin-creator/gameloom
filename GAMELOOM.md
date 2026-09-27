@@ -10,7 +10,7 @@
 > 1. implémenter ;
 > 2. tester réellement ;
 > 3. obtenir les tests verts (`npm run test:headless` → `BILAN: 19/19`,
->    `npm run test:temple` → `BILAN: 14/14`) ;
+>    `npm run test:temple` → `BILAN: 14/14`, `npm run test:ruins` → `BILAN: 21/21`) ;
 > 4. **mettre à jour GAMELOOM.md** ;
 > 5. seulement ensuite considérer la fonctionnalité terminée.
 >
@@ -24,11 +24,14 @@
 > nécessaires pour comprendre GameLoom : ce dépôt est autonome.
 
 GameLoom v0.1 — slices validés : **Barrel Blaster** (micro-FPS à vagues, hitscan,
-explosions en chaîne) — tests **19/19** ; et **Temple Escape** (aventure/puzzle :
-séquence de 3 interrupteurs, porte, sortie) — tests **14/14**. Sur build production,
-navigateur headless (CDP), 100 % déterministe — Barrel Blaster : **8 runs (Linux,
-Chrome 154) + 3 runs (Windows, Chrome 153.0.8010.53)** ; Temple Escape : **3 runs
-(Windows, Chrome 153.0.8010.53)**.
+explosions en chaîne) — tests **19/19** ; **Temple Escape** (aventure/puzzle :
+séquence de 3 interrupteurs, porte, sortie) — tests **14/14** ; **Ruins Raid**
+(exploration/action : artefact à récupérer, gardien mobile PATROL/ALERT/ATTACK,
+grille, zone d'extraction, 3 assets générés par Blender headless) — tests **21/21**.
+Sur build production, navigateur headless (CDP), 100 % déterministe — Barrel
+Blaster : **8 runs (Linux, Chrome 154) + 3 runs (Windows, Chrome 153.0.8010.53)** ;
+Temple Escape : **3 runs (Windows, Chrome 153.0.8010.53)** ; Ruins Raid : **5 runs
+(Windows, Chrome 153.0.8010.53)** avec fingerprint de ticks identique.
 
 ---
 
@@ -83,8 +86,9 @@ Versions **réellement installées** (lues depuis `node_modules`, 2026-09-27) :
 
 Dev : `@types/three` 0.186.0, `@types/node` 26.6.3, `ws` 8.22.0 (testeur CDP).
 
-**Blender** (outillage assets, hors npm) : **4.2.3 LTS**, mode headless (script de
-génération : `tools/blender/make_assets.py` ; le chemin d'installation dépend de la machine).
+**Blender** (outillage assets, hors npm) : **4.2 LTS** (4.2.23 installé sur la machine
+Windows, 2026-09-27), mode headless (script de génération : `tools/blender/make_assets.py` ;
+le chemin d'installation dépend de la machine).
 **Alternative sans Blender (validé, jeu #2)** : `tools/make_glb.mjs` — générateur de GLB
 low-poly **pure Node** (boîtes composées, normales planes, GLB binaire valide + chunk BIN).
 Pipeline asset complet : `node tools/make_glb.mjs <nom>` puis `glb collider auto` +
@@ -109,16 +113,20 @@ Arborescence **réellement obtenue** (hors `node_modules/` et `dist/`) :
 ├── JOURNAL_START.txt            ← horodatage de départ
 ├── index.html                   ← shell DOM jeu #1 (canvas #game, HUD, overlay)
 ├── temple.html                  ← shell DOM jeu #2 (canvas #game, HUD, overlay)
+├── ruins.html                   ← shell DOM jeu #3 (canvas #game, HUD, overlay)
 ├── package.json                 ← scripts + dépendances
 ├── tsconfig.json                ← TS strict, noEmit, bundler, ES2022
-├── vite.config.ts               ← ports 5173/4173, base './', multi-entry (index.html + temple.html)
+├── vite.config.ts               ← ports 5173/4173, base './', multi-entry (index + temple + ruins)
 ├── assets/
 │   ├── barrel.glb               ← 652 sommets · Health.max=50 · Explosive 8/120/20 · dynamic 30 kg
-│   ├── crate.glb                ← 96 sommets  · static · décor/couvert (réutilisé par les 2 jeux)
+│   ├── crate.glb                ← 96 sommets  · static · décor/couvert (réutilisé par les 3 jeux)
 │   ├── target.glb               ← 1 mesh · Health.max=30 · Scored · static
-│   └── switch.glb               ← 72 sommets · static · interrupteur (jeu #2, généré par make_glb.mjs)
+│   ├── switch.glb               ← 72 sommets · static · interrupteur (jeu #2, généré par make_glb.mjs)
+│   ├── guardian.glb             ← 88 sommets  · kinematic · Health.max=100 (jeu #3, Blender headless)
+│   ├── artifact.glb             ← 166 sommets · static · cristal sur socle (jeu #3, Blender headless)
+│   └── ruins_column.glb         ← 120 sommets · static · colonne brisée (jeu #3, Blender headless)
 ├── src/
-│   ├── core/                    ← LE CORE GameLoom (888 LOC, 7 fichiers — non modifié par le jeu #2)
+│   ├── core/                    ← LE CORE GameLoom (888 LOC, 7 fichiers — non modifié par les jeux #2 et #3)
 │   │   ├── types.ts   (86)      ← types + namespace + vocabulaire canonique
 │   │   ├── ecs.ts     (69)      ← adapter Miniplex → API stable (3 interfaces)
 │   │   ├── events.ts  (65)      ← bus d'événements (log 500, depth guard, filtre tag)
@@ -128,32 +136,45 @@ Arborescence **réellement obtenue** (hors `node_modules/` et `dist/`) :
 │   │   └── index.ts   (9)       ← surface publique exportée
 │   └── game/
 │       ├── main.ts      (355)   ← Barrel Blaster : tir, vagues, munitions, HUD, audio, règles, arène
-│       └── temple/
-│           └── main.ts  (328)   ← Temple Escape : séquence d'interrupteurs, porte, sortie, HUD, audio
+│       ├── temple/
+│       │   └── main.ts  (328)   ← Temple Escape : séquence d'interrupteurs, porte, sortie, HUD, audio
+│       └── ruins/
+│           └── main.ts  (438)   ← Ruins Raid : gardien mobile (PATROL/ALERT/ATTACK), artefact, grille, extraction
 └── tools/
     ├── cli.mjs              (495) ← CLI `glb` (inspect/validate/doctor/collider/physics/component)
     ├── test_headless.mjs    (260) ← testeur CDP déterministe Barrel Blaster (19 checks, port 9224)
     ├── test_temple.mjs      (241) ← testeur CDP déterministe Temple Escape (14 checks, port 9224)
+    ├── test_ruins.mjs       (332) ← testeur CDP déterministe Ruins Raid (21 checks, port 9224)
     ├── make_glb.mjs         (145) ← générateur de GLB low-poly pure Node (sans Blender)
     ├── diag_aim.mjs, diag_chain.mjs, diag_t6.mjs  ← scripts de diagnostic ad hoc
     ├── final_screenshot.png  ← capture finale Barrel Blaster (git-ignoré)
     ├── temple_screenshot.png ← capture finale Temple Escape (git-ignoré)
-    └── blender/make_assets.py (90) ← génération des 3 GLB du jeu #1 (Blender headless)
+    ├── ruins_screenshot.png  ← capture finale Ruins Raid (git-ignoré)
+    └── blender/
+        ├── make_assets.py       (90)  ← 3 GLB du jeu #1 (Blender headless)
+        └── make_ruins_assets.py (193) ← 3 GLB du jeu #3 : guardian, artifact, ruins_column (Blender headless)
 ```
 
 Fichiers importants :
 - **`src/core/runtime.ts`** : le cœur. `createRuntime()` (async, init Rapier), timestep fixe,
   KCC, moteur de règles `on()`, actions core, `raycast`, `explodeAt`, `removeEntity`, et l'objet
-  `window.GameLoom` (API publique + `_debug`). **Non modifié par le jeu #2.**
+  `window.GameLoom` (API publique + `_debug`). **Non modifié par les jeux #2 et #3.**
 - **`src/game/main.ts`** : le jeu #1 (Barrel Blaster). Montre comment on **utilise** le core :
   boot, arène, tir hitscan, vagues, `rt.on(...)` (règles), `rt.onTick(...)`, input.
 - **`src/game/temple/main.ts`** : le jeu #2 (Temple Escape). Montre un **autre usage** du core :
   2e entrée HTML (multi-entry Vite), puzzle à séquence (état TS + règles EVENT→ACTION),
   **objet du monde possédé par le jeu** (la porte : `rt.world`/`rt.scene` + `removeCollider`),
   zone de sortie par inclusion dans `onTick`, hooks `_debug` de jeu (`gameInteract`, `templeState`).
+- **`src/game/ruins/main.ts`** : le jeu #3 (Ruins Raid). Montre un **troisième usage** du core :
+  **entité mobile possédée par le jeu** (le gardien : rigid body **kinematic** déplacé par
+  `rt.world.bodies` + `setTranslation`/`setRotation`, **sans toucher au core**), machine à états
+  PATROL/ALERT/ATTACK, verrouillage anti-traversée via `rt.raycast`, 3e entrée HTML (multi-entry),
+  hooks `_debug` de jeu (`gameInteract`, `ruinsState`).
 - **`tools/cli.mjs`** : l'outillage asset (lecture/réécriture GLB + métadonnées).
-- **`tools/test_headless.mjs` / `tools/test_temple.mjs`** : les harness de test — **même pattern
-  CDP réutilisé** pour chaque jeu (on référence le pattern, on ne recopie pas aveuglément).
+- **`tools/test_headless.mjs` / `tools/test_temple.mjs` / `tools/test_ruins.mjs`** : les harness de
+  test — **même pattern CDP réutilisé** pour chaque jeu (on référence le pattern, on ne recopie pas
+  aveuglément). Le harness #3 ajoute un **fingerprint de ticks** (valeurs exactes aux ticks clés)
+  pour comparer la détermination entre runs.
 
 ---
 
@@ -171,7 +192,7 @@ npm install
 npx tsc --noEmit
 
 # 3. Build production (tsc + vite build → dist/) — multi-entry : index.html (jeu #1)
-#    + temple.html (jeu #2), configuré dans vite.config.ts (rollupOptions.input)
+#    + temple.html (jeu #2) + ruins.html (jeu #3), vite.config.ts (rollupOptions.input)
 npm run build
 
 # 4. Copy des GLB dans dist (Vite ne copie PAS assets/ → public/) — OBLIGATOIRE avant de servir :
@@ -180,10 +201,12 @@ cp assets/*.glb dist/assets/
 # 5. Servir le build (preview sur http://localhost:4173)
 npm run preview
 #    → jeu #1 : http://localhost:4173/  ·  jeu #2 : http://localhost:4173/temple.html
+#    → jeu #3 : http://localhost:4173/ruins.html
 
 # 6. Tests headless déterministes (nécessite Chrome headless + le serveur, voir §17)
 npm run test:headless          # Barrel Blaster → "BILAN: 19/19 tests passés"
 npm run test:temple            # Temple Escape → "BILAN: 14/14 tests passés"
+npm run test:ruins             # Ruins Raid      → "BILAN: 21/21 tests passés"
 
 # 7. CLI glb (outillage asset)
 npm run glb -- --help
@@ -193,21 +216,23 @@ npm run glb -- validate assets/barrel.glb
 
 Notes :
 - **`npm run build`** = `tsc --noEmit && vite build` (validé, ~0.7 s). Chaque jeu = une entrée
-  HTML à ajouter dans `rollupOptions.input` de `vite.config.ts` (validé avec 2 entrées).
+  HTML à ajouter dans `rollupOptions.input` de `vite.config.ts` (validé avec 3 entrées).
 - **`npm run dev`** (Vite dev, port 5173) existe mais **n'est PAS à utiliser pour tester** :
   le HMR provoque un **double-boot** (2 runtimes GameLoom en parallèle). Toujours tester sur le
   **build production** (`npm run build` + `npm run preview`, port 4173).
 - **`npm run glb -- <args>`** : le `--` sépare le script npm des arguments CLI.
 - Chaque harness pointe sur son jeu par défaut via `URL_TARGET` : `test_headless.mjs` →
-  `http://localhost:4173/`, `test_temple.mjs` → `http://localhost:4173/temple.html`
+  `http://localhost:4173/`, `test_temple.mjs` → `http://localhost:4173/temple.html`,
+  `test_ruins.mjs` → `http://localhost:4173/ruins.html`
   (overridable par la variable d'environnement `URL_TARGET`).
 
 ---
 
 ## 5. Créer un jeu
 
-Un jeu GameLoom = **une entrée HTML** (`index.html`, `temple.html`, …) + **un `main.ts`** qui
-appelle le core. Deux jeux coexistent déjà (multi-entry Vite, §4). Exemple minimal **réel**
+Un jeu GameLoom = **une entrée HTML** (`index.html`, `temple.html`, `ruins.html`, …) + **un
+`main.ts`** qui appelle le core. Trois jeux coexistent déjà (multi-entry Vite, §4).
+Exemple minimal **réel**
 (extrait de `src/game/main.ts`, API actuelle) :
 
 ```ts
@@ -262,14 +287,28 @@ Le **core fournit** : le joueur, la physique, le temps déterministe, le raycast
 le tir, les vagues, les munitions, l'audio, le HUD, et la décision de *quand* chaque entité
 fait quoi (les règles).
 
-**Objets du monde possédés par le jeu** (pattern validé par les 2 jeux) : le `Runtime` expose
+**Objets du monde possédés par le jeu** (pattern validé par les 3 jeux) : le `Runtime` expose
 `rt.world` (Rapier) et `rt.scene` (Three.js). Un objet du monde **sans entité ECS** (sol, murs,
-**la porte** de Temple Escape) est créé par le jeu : `RAPIER.ColliderDesc` +
-`world.createRigidBody(fixed())` + `world.createCollider(...)`, et un mesh `rt.scene.add(...)`.
-Ouvrir la porte = `world.removeCollider(c, true)` + `world.removeRigidBody(body)` (gameplay
-immédiat) + animation du mesh (présentation). Ce pattern est identique à l'arène de
-Barrel Blaster. Les entités spawnées via `spawnAsset` restent la voie de fait pour tout ce qui
-a besoin d'un état ECS (health, tags, inspection).
+**la porte** de Temple Escape, **la grille** de Ruins Raid) est créé par le jeu :
+`RAPIER.ColliderDesc` + `world.createRigidBody(fixed())` + `world.createCollider(...)`, et un
+mesh `rt.scene.add(...)`. Ouvrir la porte/grille = `world.removeCollider(c, true)` +
+`world.removeRigidBody(body)` (gameplay immédiat) + animation du mesh (présentation). Ce
+pattern est identique à l'arène de Barrel Blaster. Les entités spawnées via `spawnAsset` restent
+la voie de fait pour tout ce qui a besoin d'un état ECS (health, tags, inspection).
+
+**Entités mobiles possédées par le jeu (validation jeu #3 — gardien kinematic)** : une entité
+spawnée via `spawnAsset` avec `physics.body = 'kinematic'` peut être **déplacée par le jeu sans
+aucune extension du core** : le `Runtime` expose `rt.world` et pose `body.userData = <id>` au
+spawn, donc le jeu retrouve le rigid body (`rt.world.bodies.getAll()` + `b.userData === id`) et
+l'avance par `body.setTranslation({...}, true)` + `body.setRotation({...}, true)` (orientation),
+dans `onTick`. Le core synchronise le mesh sur la position Rapier à chaque tick (pattern de
+sync mesh ↔ physique existant), et le KCC du joueur traite le corps kinematic comme un obstacle
+solide. Pour empêcher l'entité de traverser les murs, le jeu verrouille le déplacement avec
+`rt.raycast` (origine décalée le long de la direction, la capsule du joueur est exclue
+automatiquement). **Aucune API de mouvement n'a été ajoutée au core pour le jeu #3** — la
+machine à états PATROL/ALERT/ATTACK, les waypoints et le verrouillage sont du code de jeu
+(cf. `src/game/ruins/main.ts`). Si un futur jeu multi-entités mobiles montre la même
+duplication, une primitive de déplacement pourrait alors être envisagée (règle des trois).
 
 **Tags de scène par override** : `rt.spawnAsset(asset, at, { tags: [...] })` remplace le tag
 canonique (basename du GLB). Validé avec le jeu #2 : `switch.glb` spawné 3 fois avec
@@ -279,8 +318,10 @@ scène** (quel slot) n'est donc PAS une capacité d'asset, conformément à la f
 **Événements personnalisés du jeu** : le bus accepte **tout** nom d'événement. Le jeu émet ses
 propres événements via `rt.bus.emit('puzzle.completed', id, {...})` et s'y abonne via
 `rt.on('switch', 'puzzle.completed', {...})`. Validé avec le jeu #2 : `switch.activated`,
-`puzzle.reset`, `puzzle.completed`, `player.exited` (4 événements de jeu, émis/loggués et
-consommés par les règles — voir §11).
+`puzzle.reset`, `puzzle.completed`, `player.exited` (4 événements de jeu) ; et avec le jeu #3 :
+`artifact.collected`, `guardian.alert`, `guardian.attack`, `guardian.lost`, `guardian.reached`,
+`player.extracted` (6 événements de jeu) — tous émis/loggués et consommés par les règles (voir
+§11).
 
 ---
 
@@ -497,10 +538,10 @@ dimensions locales ; il n'y a pas d'application de `mesh.scale` au collider Rapi
 asset doit être mis à l'échelle, il faut le pré-échelle dans le GLB (Blender). Ne pas supposer
 que `spawnAsset` échelle le collider.
 
-**Objet du monde statique possédé par le jeu** (pattern arène/porte, validé sur les 2 jeux) :
-un objet **sans entité ECS** (sol, murs, porte) est créé directement sur `rt.world` +
-`rt.scene` avec `RAPIER.ColliderDesc.cuboid(...)` + `RigidBodyDesc.fixed()` — voir §5.
-L'ouverture d'un tel objet (la porte) = `world.removeCollider(c, true)` +
+**Objet du monde statique possédé par le jeu** (pattern arène/porte/grille, validé sur les 3
+jeux) : un objet **sans entité ECS** (sol, murs, porte, grille) est créé directement sur
+`rt.world` + `rt.scene` avec `RAPIER.ColliderDesc.cuboid(...)` + `RigidBodyDesc.fixed()` — voir
+§5. L'ouverture d'un tel objet (la porte, la grille) = `world.removeCollider(c, true)` +
 `world.removeRigidBody(body)` ; le gameplay prend effet **immédiatement**, l'animation du mesh
 est de la présentation (temps de jeu via `onTick`).
 
@@ -564,14 +605,20 @@ Le bus est **synchrones, déterministes, filtrés par tag**, avec un **depth gua
 | `puzzle.reset` | **jeu #2**, mauvaise séquence (tous les switches repassent inactifs) | `data.slot` | règle `switch` → `sound` |
 | `puzzle.completed` | **jeu #2**, séquence complète | — | règle `switch` → `openDoor` + `sound` |
 | `player.exited` | **jeu #2**, joueur dans la zone de sortie (porte ouverte) | `other: 'door'` | règle `player` → victoire + `sound` |
+| `artifact.collected` | **jeu #3**, artefact récupéré (E à proximité) | `other: 'player'`, `data.dist` | règle `artifact` → `addScore`+`sound` + `openGate` (fn) |
+| `guardian.alert` | **jeu #3**, le gardien détecte le joueur (PATROL→ALERT / ATTACK→ALERT) | `other: 'player'`, `data.state`, `data.dist` | règle `guardian` → `sound` |
+| `guardian.attack` | **jeu #3**, le gardien entre en attaque (ALERT→ATTACK) | `other: 'player'`, `data.state`, `data.dist` | (logging) |
+| `guardian.lost` | **jeu #3**, le gardien perd le joueur et repart en patrouille (ALERT→PATROL) | `other: 'player'`, `data.state`, `data.waypoint` | (logging) |
+| `guardian.reached` | **jeu #3**, le gardien atteint un point de patrouille | `data.waypoint` (index suivant) | (logging) |
+| `player.extracted` | **jeu #3**, joueur dans la zone d'extraction (artefact en poche) | `other: 'extraction'` | règle `player` → victoire + `sound` |
 
 **⚠️ Divergence à connaître** : le fichier `types.ts` contient une constante `EVENTS` (5 noms,
 `collision.start` absent) et un commentaire citant `wave.start, wave.clear, game.over,
 ammo.empty` — **ces 4 derniers ne sont émis NULLE PART** dans le code actuel. Ils sont
 aspirationnels. Ne pas les supposer existants. Les 6 événements de la table ci-dessus sont
 ceux qui comptent **dans le core** — en plus, chaque jeu émet ses propres événements de
-gameplay via `rt.bus.emit(...)` (jeu #2 : 4, validés ci-dessus). Le bus n'a **aucune liste
-blanche** d'événements.
+gameplay via `rt.bus.emit(...)` (jeu #2 : 4, jeu #3 : 6, tous validés ci-dessus). Le bus n'a
+**aucune liste blanche** d'événements.
 
 ---
 
@@ -712,13 +759,16 @@ Méthodes **core** (11, sur 10 lignes — `setPlayerHealth`/`addPlayerHealth` co
 | `remove(id)` | détruit une entité. |
 | `clearTag(tag)` | détruit toutes les entités d'un tag. |
 
-Méthodes **ajoutées par les jeux** (pattern validé sur les 2 jeux) : le jeu ajoute ses hooks
+Méthodes **ajoutées par les jeux** (pattern validé sur les 3 jeux) : le jeu ajoute ses hooks
 d'interaction propre au `window.GameLoom._debug` au boot (comme le fait le core pour
 `gameFire` en #1). **Barrel Blaster** : `gameFire()` (1). **Temple Escape** :
 `gameInteract()` (actionner l'interrupteur à portée, la logique de proximité étant du code de
-jeu) + `templeState()` (état du puzzle : `{ switches, doorOpen, won, seq }`) — 2.
+jeu) + `templeState()` (état du puzzle : `{ switches, doorOpen, won, seq }`) — 2. **Ruins Raid** :
+`gameInteract()` (récupérer l'artefact à portée) + `ruinsState()` (état du raid :
+`{ artifact{pos,collected}, gate{open}, extraction{active,x,zMax}, won, dead, gameOver,
+guardian{id,state,waypoint,health,cooldown}, waypoints }`) — 2.
 **Il n'y a pas de `gameLook`** — la visée passe par `aimAt`/`setLook`.
-**Total `_debug` au runtime : 12 + 1 (jeu #1) + 2 (jeu #2)** selon le jeu chargé.
+**Total `_debug` au runtime : 12 + 1 (jeu #1) + 2 (jeu #2) + 2 (jeu #3)** selon le jeu chargé.
 
 **Quelle API est stable** : `inspect/entities/events/stats/snapshot/doctor/pause/resume/step/
 setPaused/isPaused/rules/actions` = contractuel. `_debug` = non stable.
@@ -757,12 +807,14 @@ se lit dans `snapshot().player.pos`).
 ## 17. CDP / harness
 
 Le harness de référence est **`tools/test_headless.mjs`** (260 lignes, 19 checks, port CDP
-**9224**). **`tools/test_temple.mjs`** (241 lignes, 14 checks) en est la **seconde instance,
-même pattern** : même classe CDP (`ws` → `Runtime.evaluate`), même `check()`/bilan, même
-contrôle du temps par `pause()`/`step(n)`, `URL_TARGET` propre au jeu. **Référence le pattern
-plutôt que de recopier à l'aveugle** ; pour un nouveau jeu, dupliquer le fichier et changer
-`URL_TARGET` + les checks. Portable Windows/Linux (aucun chemin absolu d'OS ; validé sur les
-deux).
+**9224**). **`tools/test_temple.mjs`** (241 lignes, 14 checks) et **`tools/test_ruins.mjs`**
+(332 lignes, 21 checks) en sont la **seconde et troisième instance, même pattern** : même
+classe CDP (`ws` → `Runtime.evaluate`), même `check()`/bilan, même contrôle du temps par
+`pause()`/`step(n)`, `URL_TARGET` propre au jeu. Le harness #3 ajoute un **fingerprint de
+ticks** (positions/jauge aux ticks clés) pour comparer la détermination entre runs successifs
+(5/5 runs verts, fingerprint identique). **Référence le pattern plutôt que de recopier à
+l'aveugle** ; pour un nouveau jeu, dupliquer le fichier et changer `URL_TARGET` + les checks.
+Portable Windows/Linux (aucun chemin absolu d'OS ; validé sur les deux).
 
 Workflow réellement validé :
 1. **Lancer Chrome headless** (prérequis, hors npm) :
@@ -925,5 +977,5 @@ nouveau développement (à valider + documenter avant).
 
 *Ce document est la source de vérité. Toute capacité ajoutée doit y être validée et documentée
 avant d'être considérée terminée. Version : GameLoom v0.1 — slices Barrel Blaster + Temple
-Escape (2026-09-27), validés Linux (Chrome 154) et Windows (Chrome 153.0.8010.53). Core :
-888 LOC, non modifié entre les deux jeux.*
+Escape + Ruins Raid (2026-09-27), validés Linux (Chrome 154) et Windows (Chrome
+153.0.8010.53). Core : 888 LOC, non modifié entre les trois jeux.*

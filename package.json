@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "glb": "node tools/cli.mjs",
-    "test:headless": "node tools/test_headless.mjs"
+    "test:headless": "node tools/test_headless.mjs",
+    "test:temple": "node tools/test_temple.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

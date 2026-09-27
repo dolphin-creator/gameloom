@@ -95,9 +95,9 @@ function readBinChunk() {
 function save(file, json) {
   writeFileSync(file, Buffer.from(JSON.stringify(json)));
 }
-// NOTE: v0.1 — pour préserver le GLB binaire, on ré-encode le GLB au format JSON (.gltf.json)
-// seulement quand il n'y a pas de chunk BIN. Sinon on lit l'original et on réécrit un GLB
-// via gltf-transform (voir writeGlb).
+// Réécriture du GLB: header + chunk JSON (padding 0x20) + chunk BIN (padding 0x00),
+// le BIN est préservé tel quel. @gltf-transform n'est PAS utilisé (cf. GAMELOOM.md §2/§8).
+// Sans chunk BIN: réécriture en JSON seul (glTF pur).
 function writeGlb(file, json) {
   const { ab, off, len } = _glbView;
   const dv = new DataView(ab, off);
@@ -177,6 +177,37 @@ const HELP = {
     '  glb doctor assets/barrel.glb',
     '',
     'Chaque commande accepte --help pour la documentation détaillée.',
+  ],
+  'inspect': [
+    'glb inspect — affiche le contenu d\'un asset (métadonnées + géométrie)',
+    '',
+    '  inspect <file.glb> [--json]',
+    '',
+    '    --json   JSON brut (sinon affichage lisible)',
+    '',
+    'Résultat: file, ns, meshes, vertices (sommets VEC3), boundingBox (min/max/size/center),',
+    'gameloom (métadonnées com.gameloom.v0, ou null si asset brut).',
+    '',
+    'Exemple: glb inspect assets/barrel.glb',
+  ],
+  'validate': [
+    'glb validate — vérifie la structure et les métadonnées d\'un asset',
+    '',
+    '  validate <file.glb>',
+    '',
+    'Vérifie: présence mesh; collider.type ∈ box|sphere|capsule, size = nombres > 0',
+    '(box: 3 nombres); physics.body ∈ static|dynamic|kinematic (dynamic → masse > 0);',
+    'Health.max nombre > 0; Explosive.{radius,damage,impulse} nombres; composants canoniques.',
+    '',
+    '✓ valide (exit 0) / ✗ INVALIDE + liste des problèmes (exit 1). Avertissements (!) non bloquants.',
+  ],
+  'doctor': [
+    'glb doctor — diagnostic complet d\'un asset (erreurs + avertissements, sortie JSON)',
+    '',
+    '  doctor <file.glb>',
+    '',
+    'Résultat JSON: checks.gltf (magic, scenes, meshes, bin_chunk), checks.bbox, checks.gameloom',
+    '(présence collider/physics/components), checks.warnings, ok.',
   ],
   'collider': [
     'glb collider — collider de l\'asset (espace local)',
@@ -353,16 +384,19 @@ function cmdCollider(args) {
     die(`sous-commande inconnue: ${sug ? `"${sub}" (did you mean "${sug}"?)` : sub} — voir: glb collider --help`);
   }
   const rest = args.slice(1);
-  const { opts, pos } = sub === 'auto' ? parseOpts(rest, []) : parseOpts(rest, ['type', 'size', 'center']);
-  if (!existsSync(pos[0] ?? file)) die(`fichier introuvable: ${pos[0] ?? file}`);
-  const json = load(pos[0] ?? file);
+  const parsed = sub === 'auto' ? parseOpts(rest, []) : parseOpts(rest, ['type', 'size', 'center']);
+  if (parsed.help) { console.log(HELP.collider.join('\n')); return; }
+  const { opts, pos } = parsed;
+  const fileArg = pos[0];
+  if (!fileArg || !existsSync(fileArg)) die(`fichier introuvable: ${fileArg ?? '(manquant)'}`);
+  const json = load(fileArg);
   const meta = getMeta(json) ?? {};
   if (sub === 'auto') {
     const bbox = computeBbox(json);
     if (!bbox) die('bounding box non calculable (accessor VEC3 absente?)');
     meta.collider = { type: 'box', size: bbox.size.map(r3), center: bbox.center.map(r3) };
     setMeta(json, meta);
-    writeGlb(pos[0], json);
+    writeGlb(fileArg, json);
     console.log(`✓ collider auto: box size=[${meta.collider.size}] center=[${meta.collider.center}]`);
   } else {
     const type = opts.type ?? 'box';
@@ -373,7 +407,7 @@ function cmdCollider(args) {
     if (size.length !== need || size.some((n) => !isFinite(n) || n <= 0)) die(`--size invalide pour ${type} (attend ${need} nombres > 0)`);
     meta.collider = { type, size: size.map(r3), center: center.map(r3) };
     setMeta(json, meta);
-    writeGlb(pos[0], json);
+    writeGlb(fileArg, json);
     console.log(`✓ collider: ${type} size=[${meta.collider.size}] center=[${meta.collider.center}]`);
   }
 }
@@ -382,7 +416,9 @@ function cmdPhysics(args) {
   const sub = args[0];
   if (!sub || sub === '--help' || sub === '-h') { console.log(HELP.physics.join('\n')); return; }
   if (sub !== 'set') die(`sous-commande inconnue: ${sub} — voir: glb physics --help`);
-  const { opts, pos } = parseOpts(args.slice(1), ['body', 'mass']);
+  const parsed = parseOpts(args.slice(1), ['body', 'mass']);
+  if (parsed.help) { console.log(HELP.physics.join('\n')); return; }
+  const { opts, pos } = parsed;
   if (!existsSync(pos[0])) die(`fichier introuvable: ${pos[0]}`);
   const json = load(pos[0]);
   const meta = getMeta(json) ?? {};
@@ -399,6 +435,7 @@ function cmdComponent(args) {
   const sub = args[0];
   if (!sub || sub === '--help' || sub === '-h') { console.log(HELP.component.join('\n')); return; }
   if (sub !== 'add') die(`sous-commande inconnue: ${sub} — voir: glb component --help`);
+  if (args.includes('--help') || args.includes('-h')) { console.log(HELP.component.join('\n')); return; }
   const rest = args.slice(1);
   const known = { Health: ['max'], Explosive: ['radius', 'damage', 'impulse'], Scored: ['points'] };
   const comp = rest[1];
@@ -436,9 +473,15 @@ if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
 }
 const file = rest.find((a) => !a.startsWith('-') && a !== cmd);
 switch (cmd) {
-  case 'inspect': cmdInspect(file ?? rest[0], rest.slice(1)); break;
-  case 'validate': cmdValidate(rest[0]); break;
-  case 'doctor': cmdDoctor(rest[0]); break;
+  case 'inspect':
+    if (rest[0] === '--help' || rest[0] === '-h') { console.log(HELP.inspect.join('\n')); process.exit(0); }
+    cmdInspect(file ?? rest[0], rest.slice(1)); break;
+  case 'validate':
+    if (rest[0] === '--help' || rest[0] === '-h') { console.log(HELP.validate.join('\n')); process.exit(0); }
+    cmdValidate(rest[0]); break;
+  case 'doctor':
+    if (rest[0] === '--help' || rest[0] === '-h') { console.log(HELP.doctor.join('\n')); process.exit(0); }
+    cmdDoctor(rest[0]); break;
   case 'collider': cmdCollider(rest); break;
   case 'physics': cmdPhysics(rest); break;
   case 'component': cmdComponent(rest); break;

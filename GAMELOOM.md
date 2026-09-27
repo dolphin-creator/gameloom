@@ -23,8 +23,8 @@
 > nécessaires pour comprendre GameLoom : ce dépôt est autonome.
 
 GameLoom v0.1 — slice validé : **Barrel Blaster** (micro-FPS à vagues, hitscan,
-explosions en chaîne). Tests : **19/19 × 8 runs** sur build production, navigateur
-headless (CDP), 100 % déterministe.
+explosions en chaîne). Tests : **19/19** sur build production, navigateur headless (CDP),
+100 % déterministe — **8 runs (Linux, Chrome 154) + 3 runs (Windows, Chrome 153.0.8010.53)**.
 
 ---
 
@@ -79,8 +79,10 @@ Versions **réellement installées** (lues depuis `node_modules`, 2026-09-27) :
 
 Dev : `@types/three` 0.186.0, `@types/node` 26.6.3, `ws` 8.22.0 (testeur CDP).
 
-**Blender** (outillage assets, hors npm) : **4.2.3 LTS** (`/home/jbo/blender/blender-4.2.3-linux-x64/blender`), mode headless.
-**Chrome** (test headless) : **154** en mode `--headless=new`, WebGL par SwiftShader.
+**Blender** (outillage assets, hors npm) : **4.2.3 LTS**, mode headless (script de
+génération : `tools/blender/make_assets.py` ; le chemin d'installation dépend de la machine).
+**Chrome** (test headless) : **153/154** en mode `--headless=new`, WebGL par SwiftShader
+(validé sur 154 Linux et 153.0.8010.53 Windows).
 
 Règle : la dépendance ne doit **pas** coupler l'API publique — Miniplex est derrière un
 adapter (`ecs.ts`), Rapier est encapsulé dans le runtime. Les 3 interfaces stables de
@@ -117,8 +119,8 @@ Arborescence **réellement obtenue** (hors `node_modules/` et `dist/`) :
 │   └── game/
 │       └── main.ts    (355)     ← Barrel Blaster : tir, vagues, munitions, HUD, audio, règles, arène
 └── tools/
-    ├── cli.mjs              (452) ← CLI `glb` (inspect/validate/doctor/collider/physics/component)
-    ├── test_headless.mjs    (256) ← testeur CDP déterministe (19 checks, port 9224)
+    ├── cli.mjs              (495) ← CLI `glb` (inspect/validate/doctor/collider/physics/component)
+    ├── test_headless.mjs    (260) ← testeur CDP déterministe (19 checks, port 9224)
     ├── diag_aim.mjs, diag_chain.mjs, diag_t6.mjs  ← scripts de diagnostic ad hoc
     ├── final_screenshot.png  ← capture finale (seule validation visuelle)
     └── blender/make_assets.py (90) ← génération des 3 GLB low-poly (Blender headless)
@@ -341,6 +343,10 @@ Chaque commande accepte --help pour la documentation détaillée.
 Commandes inconnues / options inconnues → **exit 2** avec **suggestion** (`Did you mean …?`,
 distance de Levenshtein ≤ 2). Fichier absent → exit 1.
 
+Validé : `--help` fonctionne sur la racine, les 6 commandes et les sous-commandes
+(`collider auto|set`, `physics set`, `component add`) → exit 0. Les chemins d'accès sont
+portables (aucun chemin absolu d'OS dans `cli.mjs`).
+
 ### `glb inspect <file.glb> [--json]`
 - **Syntaxe** : `glb inspect assets/barrel.glb` ; `--json` (flag, sans valeur) pour le JSON brut.
 - **Résultat** : `file`, `ns`, `meshes`, `vertices` (sommets VEC3), `boundingBox`
@@ -381,7 +387,8 @@ glb collider set <file.glb> --type box|sphere|capsule --size x,y,z --center x,y,
 ```
 glb physics set <file.glb> --body static|dynamic|kinematic [--mass N]
 ```
-- Défaut `--body dynamic`, `--mass 1`. **`dynamic` exige `--mass > 0`** (sinon exit 1).
+- Défaut `--body dynamic`, `--mass 1` (un `dynamic` **sans** `--mass` passe donc en 1 kg,
+  validé exit 0). `dynamic` avec `--mass` explicite `≤ 0` → exit 1.
 - **Exemple** : `glb physics set assets/barrel.glb --body dynamic --mass 30` → `✓ physique: dynamic mass=30kg`.
 - **`--help`** imbriqué disponible.
 
@@ -425,6 +432,12 @@ couleurs partagent le type VEC3, il faut les ignorer) et écrit `collider { type
   **`collider.setMass(mass)`** (la masse se met sur le **ColliderDesc**, PAS sur le RigidBody).
 - `kinematic` → `RigidBodyDesc.kinematicPositionBased()` (le joueur, et toute entité
   téléportée/manipulée).
+
+**Constantes du monde (core, non configurables en v0.1)** : gravité `−19.62 m/s²`
+(2× la gravité terrestre — choix gameplay : sauts vifs), vitesse de déplacement `5.6 m/s`,
+joueur = capsule `capsule(demi-hauteur 0.55, rayon 0.45)` + KCC (autostep 0.45/0.5,
+snapToGround 0.12, masse 80), œil à `+1.55` au-dessus de la base du body, saut `v₀ = 8.2 m/s`
+(apogée ≈ 2.04 m et repos à y ≈ 0.92 — validé par le check T3).
 
 **Conversion GLB → Rapier** (à chaque spawn, `spawnFromCache`) :
 1. lecture méta `collider`/`physics` (fallback : `box 1×1×1` au centre / `static` 1 kg) ;
@@ -634,7 +647,7 @@ Méthodes **core** (11, sur 10 lignes — `setPlayerHealth`/`addPlayerHealth` co
 | `setPlayerHealth(h)` / `addPlayerHealth(h)` | manipule la vie du joueur. |
 | `input({ move?, jump? })` | écrit l'input (move = `[fwd, strafe]`). |
 | `spawn(asset, x, y, z)` | spawne un GLB, retourne l'id. |
-| `fire(origin?)` | **raycast sans dégâts** (sonde de visée) — retourne `{ id, point, distance }`. |
+| `fire(origin)` | **raycast sans dégâts** (sonde de visée, portée 120) — `origin` = position de l'œil (`snapshot().player.pos + [0, 1.55, 0]`) ; retourne `{ id, point, distance }` ou `null`. |
 | `aimAt(x, y, z)` | vise un point (calcule yaw/pitch automatiquement). |
 | `remove(id)` | détruit une entité. |
 | `clearTag(tag)` | détruit toutes les entités d'un tag. |
@@ -677,19 +690,31 @@ Blaster : **0 bug** a nécessité un screenshot.
 
 ## 17. CDP / harness
 
-Le harness de test est **`tools/test_headless.mjs`** (256 lignes, 19 checks, port CDP **9224**).
+Le harness de test est **`tools/test_headless.mjs`** (260 lignes, 19 checks, port CDP **9224**).
 **Référence-le plutôt que de recopier son implémentation.** Il est **réutilisable tel quel**
-pour tout jeu GameLoom (seul le jeu testé change).
+pour tout jeu GameLoom (seul le jeu testé change), **portable Windows/Linux** (aucun chemin
+absolu d'OS ; validé sur les deux).
 
 Workflow réellement validé :
 1. **Lancer Chrome headless** (prérequis, hors npm) :
+
+   Linux :
    ```bash
    google-chrome-stable --headless=new --no-sandbox \
      --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader \
      --remote-debugging-port=9224 --user-data-dir=/tmp/chrome_gl \
      --window-size=1280,720 --mute-audio about:blank
    ```
-   (WebGL par **SwiftShader** — pas de GPU. Vérifier : `curl -s localhost:9224/json/version`.)
+   Windows (PowerShell — profil isolé obligatoire si une session Chrome tourne déjà) :
+   ```powershell
+   Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList `
+     "--headless=new","--no-sandbox","--use-gl=angle","--use-angle=swiftshader",`
+     "--enable-unsafe-swiftshader","--remote-debugging-port=9224",`
+     "--user-data-dir=$env:TEMP\chrome_gl_cdp","--window-size=1280,720","--mute-audio","about:blank"
+   ```
+
+   (WebGL par **SwiftShader** — pas de GPU. Vérifier : `curl -s localhost:9224/json/version`
+   → `"Browser": "Chrome/…"` + `webSocketDebuggerUrl`.)
 2. **Ouvrir le jeu** : `Page.navigate` sur `URL_TARGET` (défaut `http://localhost:4173/`,
    build production) ; attendre `typeof window.GameLoom === "object"`.
 3. **Injecter l'input** : `GameLoom._debug.input({ move, jump })`, `aimAt(x,y,z)`,
@@ -710,6 +735,8 @@ Détails d'implémentation utiles :
   passe.
 - La visée utilise **`_debug.aimAt`** (pas de calcul manuel yaw/pitch) et **`_debug.fire`**
   comme sonde raycast pour choisir une cible visible.
+- Le screenshot final est écrit dans **`tools/final_screenshot.png`** (chemin relatif au
+  harness, via `fileURLToPath(import.meta.url)` — portable Windows/Linux, git-ignoré).
 
 ---
 
@@ -786,8 +813,12 @@ rien.
 13. **Mouvement non mis à l'échelle** : `dx = … * speed` (sans `* FIXED_DT`) → 5.6 m/tick.
 14. **Double source de vérité** (input, yaw/pitch) : le jeu écrase l'état du core chaque tick.
 15. **Layout aléatoire de test** : les spawns de vague sont aléatoires → occlusions + joueur
-    mort → faux négatifs. **Scènes de test contrôlées** (`clearTag` + `teleportPlayer` +
-    `spawn` à positions fixes) pour T5/T6.
+   mort → faux négatifs. **Scènes de test contrôlées** (`clearTag` + `teleportPlayer` +
+   `spawn` à positions fixes) pour T5/T6.
+16. **Chemin absolu d'OS dans le code** : le harness écrivait son screenshot dans
+   `/home/jbo/gameloom/...` (Linux) → `ENOENT` (`C:\home\jbo\...`) sous Windows, crash
+   `FATALE` exit 2 **malgré 18/19 checks passés**. **Chemins relatifs au repo**
+   (ici : `fileURLToPath(import.meta.url)`), jamais de chemin absolu d'utilisateur/d'OS.
 
 ---
 
@@ -823,4 +854,5 @@ nouveau développement (à valider + documenter avant).
 ---
 
 *Ce document est la source de vérité. Toute capacité ajoutée doit y être validée et documentée
-avant d'être considérée terminée. Version : GameLoom v0.1 — slice Barrel Blaster (2026-09-27).*
+avant d'être considérée terminée. Version : GameLoom v0.1 — slice Barrel Blaster (2026-09-27),
+validé Linux (Chrome 154) et Windows (Chrome 153.0.8010.53).*

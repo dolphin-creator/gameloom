@@ -5,9 +5,13 @@
 // Screenshot: UNIQUEMENT en validation visuelle finale.
 import WebSocket from 'ws';
 import { writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 const CDP_HTTP = 'http://localhost:9224';
 const URL_TARGET = process.env.URL_TARGET ?? 'http://localhost:4173/';
+// Chemin portable (Windows/Linux) : à côté du harness, jamais de chemin absolu d'OS.
+const SHOT_PATH = join(dirname(fileURLToPath(import.meta.url)), 'final_screenshot.png');
 const T0 = Date.now();
 const ts = () => `+${((Date.now() - T0) / 1000).toFixed(1)}s`;
 
@@ -240,7 +244,7 @@ function check(name, cond, detail) {
   await GL.dbg(`GameLoom._debug.aimAt(0, 1, 0)`);
   await GL.step(1);
   const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
-  writeFileSync('/home/jbo/gameloom/tools/final_screenshot.png', Buffer.from(shot.data, 'base64'));
+  writeFileSync(SHOT_PATH, Buffer.from(shot.data, 'base64'));
   check('T9 screenshot final capturé (seule validation visuelle)', true, 'tools/final_screenshot.png');
 
   // ---------- bilan ----------

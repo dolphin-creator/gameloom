@@ -1,0 +1,26 @@
+{
+  "name": "gameloom",
+  "version": "0.1.0",
+  "description": "GameLoom v0.1 - slice Barrel Blaster",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "glb": "node tools/cli.mjs",
+    "test:headless": "node tools/test_headless.mjs"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0",
+    "@gltf-transform/core": "^4.5.0",
+    "miniplex": "^2.0.0",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "ws": "^8.22.0"
+  }
+}

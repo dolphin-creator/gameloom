@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Barrel Blaster</title>
+  <style>
+    html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#0b0e13; font-family:ui-monospace,Menlo,Consolas,monospace; }
+    #game { position:fixed; inset:0; width:100%; height:100%; display:block; }
+    #hud { position:fixed; inset:0; pointer-events:none; color:#e8edf5; text-shadow:0 1px 3px rgba(0,0,0,.8); }
+    #crosshair { position:fixed; left:50%; top:50%; width:18px; height:18px; margin:-9px 0 0 -9px; }
+    #crosshair::before,#crosshair::after { content:""; position:absolute; background:#d7e3ff; }
+    #crosshair::before { left:8px; top:0; width:2px; height:18px; }
+    #crosshair::after { left:0; top:8px; width:18px; height:2px; }
+    .hud-block { position:fixed; padding:10px 14px; font-size:15px; line-height:1.5; }
+    #hud-topleft { left:14px; top:12px; }
+    #hud-topright { right:14px; top:12px; text-align:right; }
+    #hud-bottomleft { left:14px; bottom:12px; font-size:12px; opacity:.85; }
+    #health-bar { width:180px; height:10px; background:#2a3140; border:1px solid #4a5568; margin-top:4px; }
+    #health-fill { height:100%; width:100%; background:#69d17a; transition:width .15s; }
+    #overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(5,8,12,.82); pointer-events:auto; cursor:pointer; z-index:10; }
+    #overlay .panel { text-align:center; color:#e8edf5; }
+    #overlay h1 { font-size:42px; margin:0 0 10px; letter-spacing:2px; }
+    #overlay p { font-size:15px; opacity:.85; margin:6px 0; }
+    #gameover { display:none; }
+    #stats-bar { position:fixed; right:14px; bottom:12px; font-size:11px; color:#7f9bb8; text-align:right; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="hud">
+    <div id="crosshair"></div>
+    <div class="hud-block" id="hud-topleft">
+      <div>SCORE <span id="hud-score">0</span></div>
+      <div>VAGUE <span id="hud-wave">-</span></div>
+    </div>
+    <div class="hud-block" id="hud-topright">
+      <div>VIE <span id="hud-hp">100</span></div>
+      <div id="health-bar"><div id="health-fill"></div></div>
+      <div>MUN <span id="hud-ammo">30/30</span></div>
+    </div>
+    <div class="hud-block" id="hud-bottomleft">
+      WASD déplacer · souris viser · clic tirer · R recharger · Échap pointer libre
+    </div>
+    <div id="stats-bar"></div>
+    <div id="gameover">
+      <div class="panel">
+        <h1 id="go-title">GAME OVER</h1>
+        <p id="go-detail"></p>
+        <p>clique pour recommencer</p>
+      </div>
+    </div>
+    <div id="overlay">
+      <div class="panel">
+        <h1>BARREL BLASTER</h1>
+        <p>Élimine les cibles, évite les barils qui explosent.</p>
+        <p id="ov-sub">clique pour jouer</p>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/game/main.ts"></script>
+</body>
+</html>

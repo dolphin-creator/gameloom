@@ -1,5 +1,10 @@
 # Journal expérimental — GameLoom v0.1 / Barrel Blaster
 
+> **Historical bootstrap journal.**
+> Pour la documentation actuelle : voir `GAMELOOM.md`.
+> Pour l'historique expérimental structuré : voir `EXPERIMENTS.md`.
+> Ce fichier est une archive brute — ne plus le mettre à jour.
+
 **Période :** 2026-09-27 12:15:50 → 15:54:38 (218 min, dont 2 compressions de contexte)
 **Verdict tests :** 19/19 × 8 runs consécutifs (build production, Chrome headless CDP 9224)
 

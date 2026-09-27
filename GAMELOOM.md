@@ -177,7 +177,11 @@ vagues, munitions, audio, HUD, règles.
 (mesh + body + collider + entité, émet `destroy`) · `rt.explodeAt(point, radius, damage,
 impulse, source)` (dégâts radiaux + impulsion, cf. §8) · `rt.playerState()` →
 `{ pos, yaw, pitch, grounded, vel }` · `rt.on`/`rt.onTick` (règles, §11/§5) · `rt.world`
-(Rapier) / `rt.scene` (Three.js) / `rt.bus` (events).
+(Rapier) / `rt.scene` (Three.js) / `rt.bus` (events) · `rt.applyPlayerControl({ move,
+look, jump })` (input — la **seule** voie, convention n°3 : `move = [fwd, strafe]`) ·
+`rt.setLook(yaw, pitch)` (visée — source unique, convention n°4) · `rt.byId(id)` /
+`rt.byTag(tag)` (requêtes ECS → entités) · `rt.start()` (démarre la boucle) ·
+`rt.setPaused(p)` / `rt.tickOnce()` (temps déterministe, §12).
 
 **Tir hitscan** (code de jeu, pas du core) :
 

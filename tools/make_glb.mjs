@@ -41,9 +41,21 @@ function boxGeometry(hx, hy, hz, cx, cy, cz) {
 // ---------- matériaux (glTF pbrMetallicRoughness) ----------
 const MAT_STONE = { name: 'Stone', pbrMetallicRoughness: { baseColorFactor: [0.44, 0.42, 0.38, 1], metallicFactor: 0, roughnessFactor: 0.9 } };
 const MAT_GOLD = { name: 'Gold', pbrMetallicRoughness: { baseColorFactor: [0.85, 0.68, 0.2, 1], metallicFactor: 0.5, roughnessFactor: 0.35 } };
+const MAT_VEST = { name: 'Vest', pbrMetallicRoughness: { baseColorFactor: [0.95, 0.65, 0.1, 1], metallicFactor: 0, roughnessFactor: 0.8 } };
+const MAT_BODYSUIT = { name: 'Bodysuit', pbrMetallicRoughness: { baseColorFactor: [0.3, 0.33, 0.4, 1], metallicFactor: 0, roughnessFactor: 0.85 } };
+const MAT_SKIN = { name: 'Skin', pbrMetallicRoughness: { baseColorFactor: [0.87, 0.7, 0.55, 1], metallicFactor: 0, roughnessFactor: 0.7 } };
 
 // ---------- recettes d'assets (origine à la base: y=0 au sol, Y-up glTF) ----------
 const RECIPES = {
+  // Survivant (low-poly humain ~1.6 m): jambes + gilet haute-visibilité + tête (3 primitives, 1 mesh)
+  survivor: {
+    name: 'Survivor',
+    prims: [
+      { geo: boxGeometry(0.28, 0.4, 0.2, 0, 0.4, 0), material: MAT_BODYSUIT },  // jambes 0..0.8
+      { geo: boxGeometry(0.36, 0.3, 0.24, 0, 1.1, 0), material: MAT_VEST },    // gilet/torse 0.8..1.4
+      { geo: boxGeometry(0.22, 0.1, 0.22, 0, 1.5, 0), material: MAT_SKIN },    // tête 1.4..1.6
+    ],
+  },
   // Interrupteur: socle + piédestal + levier doré (3 primitives, 1 mesh)
   switch: {
     name: 'Switch',

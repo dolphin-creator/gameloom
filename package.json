@@ -11,7 +11,8 @@
     "test:headless": "node tools/test_headless.mjs",
     "test:temple": "node tools/test_temple.mjs",
     "test:ruins": "node tools/test_ruins.mjs",
-    "test:dungeon": "node tools/test_dungeon.mjs"
+    "test:dungeon": "node tools/test_dungeon.mjs",
+    "test:outpost": "node tools/test_outpost.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

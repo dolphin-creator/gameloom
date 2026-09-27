@@ -23,7 +23,7 @@
 
 ## Experimental methodology
 
-Méthode de travail validée sur les 4 slices :
+Méthode de travail validée sur les 5 slices :
 
 - **Vertical slices** : un jeu complet et jouable (boot → gameplay → victoire/mort →
   harness) plutôt qu'une fonctionnalité isolée. Chaque slice valide une ou plusieurs
@@ -282,17 +282,132 @@ commentaires/blancs** que le jeu a dû écrire à la main :
 
 ---
 
+## Game #5 — Outpost Rescue (FPS/rescue : 3 survivants escortés, 2 ennemis, 2 zones dangereuses, évacuation)
+
+**Objectif** : (a) 5e vertical slice jouable sous pression sur **deux axes volontaires** —
+déplacement runtime de **plusieurs entités** (3 survivants + 2 ennemis = 5 kinematic) et
+**plusieurs zones/triggers** (feu + gaz + évacuation = 3 zones, multi-entités) ; (b)
+**test d'autonomie de `GAMELOOM.md`** : un agent neuf construit le jeu en n'en lisant que
+ce fichier (EXPERIMENTS/JOURNAL interdits), note les `DOC_GAP` et mesure la friction
+**sans modifier le core**.
+
+**CORE_ACCESS** : **1 lecture** (`interface Runtime`, `src/core/runtime.ts` L31–61) —
+après `DOC_GAP` explicite (cf. ci-dessous) ; **0 modification**.
+
+**Architecture testée** :
+- **3 survivants** (`survivor.glb` kinematic + `Health.max=100`, tags `survivor_a/b/c`) :
+  `WAITING → FOLLOWING` (interact E, 2,2 m) → `EVACUATED` (zone d'évacuation). `FOLLOWING`
+  = suivi à distance cible 2,2 m via `chaseBody` (kinematic possédé par le jeu) ; quand le
+  joueur entre dans la zone d'évacuation, chaque survivant part vers un **offset individuel
+  fixe** (déterministe) et s'arrête ; dans la zone → `EVACUATED` (1×) → compteur 1/3 → 3/3.
+- **2 ennemis** (`guardian.glb` réutilisé, kinematic + `Health.max=100`, tags `enemy_e1/e2`) :
+  `IDLE → CHASE` (détection 8 m) → attaque à ≤ 1,5 m (dégâts 12, cooldown 45 ticks,
+  `coolFirst` 30 sur la 1re attaque en portée).
+- **2 zones dangereuses** (feu x[1,5] z[-2,2] ; gaz x[-5,-1] z[4,8]) : inclusion AABB dans
+  `onTick`, **état d'arête par (zone, entité)** (`Map` clé `${zone}:${entity}`) →
+  `danger.enter`/`danger.exit` **uniquement sur transition** (pas de spam par tick) ;
+  feu = dégâts à l'entrée 15 + périodiques 4/12 ticks, gaz = dégâts à l'entrée 20.
+  **Cibles : joueur + survivants vivants** (première zone **multi-entités** des 5 slices).
+- **Zone d'évacuation** (x[12,15.5] z[-2,2]) : survivant `FOLLOWING` dans la zone →
+  `EVACUATED` ; 3/3 → `rescue.completed` ; joueur dans la zone **après** `rescue.completed`
+  → `player.extracted` → victoire (entrée trop tôt = pas de victoire).
+- **Tir hitscan joueur** (raycast depuis l'œil, dégâts 30, cooldown 0,25 s), score 100/ennemi.
+- **Map** : extérieur borné x[-12,5] z[-10,5], cour centrale, 3 murs/couvertures, réutilisation
+  de `crate` ×3 + `ruins_column` ×2.
+- **Assets** : `survivor.glb` **nouveau** (`make_glb.mjs` + `glb collider auto` +
+  `physics set kinematic` + `Health.max=100` ; `validate` + `doctor` OK, 0 avertissement).
+  Réutilisés : `guardian`, `crate`, `ruins_column`.
+- **Hooks `_debug`** : `gameFire()`, `gameInteract()`, `outpostState()`
+  (`{ survivors[], enemies[], evac{}, dangers[], evacCount, rescueComplete, won, dead,
+  gameOver, score }`), `rayProbe(o,d,dist)`.
+
+**Résultats** : harness **32/32** — **5 runs (Windows, Chrome 153), fingerprint unique** sur
+les 5 runs :
+```json
+{"tickAfterT3":41,"playerT4":[-5.2,3],"e1AlertTick":0,"e1KillTick":314,"e2KillTick":378,
+"fireEnterTick":394,"fireExitTick":471,"gasEnterTick":394,"hpAfterFire":61,
+"aFollowedTick":495,"aEvacTick":1045,"bFollowedTick":1107,"cFollowedTick":1114,
+"bEvacTick":1526,"cEvacTick":1249,"gapA16":2.16,"rescueTick":1526,"extractedTick":1526,
+"diedTick":30,"final":{"won":true,"evacCount":3,"enemies":0,"score":200}}
+```
+**Régressions** (1× chacune, toutes vertes) : #1 (19/19) + #2 (14/14) + #3 (21/21) + #4 (34/34).
+
+**Événements de jeu émis** (8 nouveaux + réutilisation de `player.extracted`/`enemy.alert`) :
+`survivor.followed`, `survivor.evacuated`, `survivor.died`, `danger.enter`, `danger.exit`,
+`enemy.killed`, `rescue.completed`.
+
+**DOC_GAP (test d'autonomie `GAMELOOM.md`)** : **1** — la liste §5 « Méthodes Runtime
+appelables du code jeu » était **incomplète** (omis : `applyPlayerControl`, `setLook`,
+`byTag`/`byId`, `start`, `setPaused`/`tickOnce`). Résolu par lecture du jeu de référence
+(`dungeon/main.ts`, autorisé) **+** lecture core minimale (`interface Runtime`) **après**
+marquage du gap. `GAMELOOM.md` §5 complété. Au-delà, un agent neuf peut construire le jeu
+à partir de `GAMELOOM.md` seul + le jeu de référence autorisé (pattern entité mobile).
+**`GAMELOOM.md` jugé autonome = OUI** (à la seule réserve de la complétion §5 ci-dessus).
+
+**Bugs rencontrés (3, tous issus de la friction zones/entités — aucun core)** :
+1. **Ennemi qui s'arrête à la portée d'attaque** : l'ennemi cesse de bouger à ≤ 1,5 m pour
+   attaquer (comportement correct) ; la 1re version du harness mesurait une fenêtre de
+   déplacement de 30 ticks qui **enjambe l'arrêt** → faux négatif. Fix : harness (mesurer
+   la phase de poursuite pure, puis vérifier l'arrêt immobile en portée). Code jeu correct.
+2. **Zones dangereuses multi-entités** : le pattern #2/#3/#4 (un booléen par zone) ne
+   s'étend pas à des zones qui suivent **joueur + 3 survivants** simultanément. Fix : état
+   d'arête **par (zone, entité)** (`Map` `${zone}:${entity}`), `enter`/`exit` uniquement sur
+   transition. C'est la **première zone multi-entités** — nouvelle dimension qui justifie
+   la candidate `zone(...)` avec support multi-entités.
+3. **Joueur mort en phase de combat** : les 2 ennemis blesse le joueur pendant les fenêtres
+   de tir (T6–T9) → joueur mort à T9 → `gameOver='died'` bloque `fire`/`interact` → toute la
+   suite. Fix : (a) jeu — `coolFirst` (30 ticks) sur la 1re attaque en portée (pattern #3/#4) ;
+   (b) harness — reset HP avant la phase de tir (isolation de test).
+
+**Mesure de friction** (lignes de code **hors commentaires/blancs** écrites à la main) :
+
+| Primitive | Fonction | Lignes |
+|---|---|---|
+| `bodyOf(id)` | recherche du rigid body via `userData` | 4 |
+| `faceBody(b, dx, dz)` | orientation (quaternion yaw demi-angle) | 5 |
+| `chaseBody(b, target, maxStep)` | déplacement verrouillé (`rt.raycast`) | 17 |
+| **MOBILE_ENTITY_FRICTION** | (5 entités mobiles : 3 survivants + 2 ennemis) | **26 LOC/jeu** |
+| `inZone(z, pos)` | inclusion AABB (un helper unique) | 2 |
+| `tickDangers()` | 2 zones × multi-entités + arêtes enter/exit + dégâts périodiques | ~30 |
+| `tickSurvivors()` (évac) + `checkEvacWin()` | zone d'évacuation + condition multiple | ~14 |
+| **ZONE_FRICTION** | (3 zones : feu, gaz, évacuation ; multi-entités) | **~46 LOC/jeu** |
+
+**Les 3 frictions réelles (reproduites sur une 3e slice)** :
+1. **Fuite de connaissance du core vers le jeu** : `bodyOf` pioche dans `rt.world.bodies` +
+   `userData` (comptabilité interne au spawn), `chaseBody` repose sur `rt.raycast` **qui
+   exclut la capsule du joueur** (sémantique interne), orientation = quaternion manuel.
+   *(La lecture du core a confirmé que `runtime.ts` maintient déjà une `Map bodyById`
+   interne non exposée — une `bodyOf` core serait triviale.)*
+2. **Zones multi-entités (nouvelle en #5)** : l'état d'arête par (zone, entité) est une
+   comptabilité manuelle (`Map` + `dangerTimers`) qu'une primitive `zone(...)` avec support
+   multi-entités absorberait.
+3. **Duplication** : les 26 LOC d'entité mobile recopiées **telles quelles** de #3/#4 ;
+   l'état d'arête de zone + dégâts périodiques écrits à la main.
+
+**Verdict honnête** :
+- `moveEntity(id, target, maxStep, { face })` — **3e reproduction** (#3 : 3 mobiles, #4 : 3,
+  #5 : 5) → **règle des trois (D002) atteinte**. La promotion au core est **justifiée**.
+- `zone(min, max, { entities, onEnter, onExit, tick? })` — **4e occurrence** (#2, #3, #4, #5)
+  + **nouvelle dimension multi-entités** (#5) → **règle des trois dépassée**. La promotion au
+  core est **justifiée** et doit inclure le multi-entités.
+- **Non implémentées en v0.1** — cette slice ne fait que **mesurer** la friction (politique
+  de la mission : core intact, mesurer plutôt que modifier prématurément). La décision de
+  promotion est maintenant **possible**.
+
+---
+
 ## Cross-game observations
 
-Synthèse des 4 slices :
+Synthèse des 5 slices :
 
 - **Core stable** : le core (7 fichiers, ~890 LOC) a été **créé sur le jeu #1 et n'a pas
-  été modifié pour les jeux #2, #3 et #4** (CORE_ACCESS_REQUIRED = 0 sur #4). Tous les
-  jeux n'utilisent que la surface publique + `rt.world` / `rt.scene` / `rt.bus`.
-- **Déterminisme 100 % sur les 4 jeux** : timestep fixe + scènes contrôlées + pas de
+  été modifié pour les jeux #2, #3, #4 et #5** (CORE_ACCESS_REQUIRED = 0 sur #4 ; #5 =
+  **1 lecture post-DOC_GAP, 0 modification**). Tous les jeux n'utilisent que la surface
+  publique + `rt.world` / `rt.scene` / `rt.bus`.
+- **Déterminisme 100 % sur les 5 jeux** : timestep fixe + scènes contrôlées + pas de
   `Math.random` non seedé. Répartition des runs : #1 = 8 (Linux) + 3 (Windows) ;
-  #2 = 3 (Windows) ; #3 = 5 (Windows) ; #4 = 5 (Windows) — tous avec fingerprint de
-  ticks identique quand le harness en produit un (#3, #4).
+  #2 = 3 (Windows) ; #3 = 5 (Windows) ; #4 = 5 (Windows) ; **#5 = 5 (Windows)** — tous
+  avec fingerprint de ticks identique quand le harness en produit un (#3, #4, #5).
 - **JSON-first** : sur les 4 jeux, **0 bug** a nécessité un screenshot pour être trouvé
   ou prouvé (la géométrie se lit dans `snapshot()`, ex. « le joueur s'arrête à
   x≈-13.5 »). La vision est réservée à la validation visuelle finale (1 screenshot/jeu).
@@ -306,11 +421,21 @@ Synthèse des 4 slices :
   exclusion du joueur dans le raycast, quaternion) ; duplication du test AABB ; états
   d'entrée/sortie manuels.
 - **Processus Windows persistants** (Chrome CDP 9224, Vite preview 4173) : lancés en
-  **détaché** (Python `subprocess.Popen` avec `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`,
-  stdio vers fichiers log), PID conservé pour l'arrêt explicatif (`taskkill /F /T`),
-  vérification du service par HTTP/port — jamais de launch avec handles hérités.
+  **détaché** (stdio vers fichiers log, flags de détachement, PID conservé, `taskkill /F /T`
+  pour l'arrêt, vérification du service par HTTP/port) — jamais de launch avec handles
+  hérités. **Découverte #5 (bug OpenCode #32504)** : même avec un détachement correct
+  (`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, stdio → fichiers, sans shell intermédiaire
+  — `npm.cmd`/`shell:true` **et** `node.exe` direct reproduisent le blocage), le tool call
+  qui lance un serveur persistant peut laisser **la boucle d'outils OpenCode bloquée** après
+  le retour. C'est un bug d'OpenCode, pas une fuite de handle au lancement. **Workaround
+  fiable (devenu la procédure)** : un **orchestrateur à cycle de vie complet**
+  (`tools/run_harnesses.mjs`) — une commande qui démarre vite preview + Chrome headless
+  (détachés, stdio → logs), attend le ready (polling court), exécute le(s) harness, tue
+  l'arbre par PID, vérifie les ports libres et sort. **Aucun processus persistant ne survit
+  au tool call.**
 - **Régressions** : chaque slice a relancé les harness des slices précédentes (restés
-  verts) : #4 a validé #1 (19/19) + #2 (14/14) + #3 (21/21) avant de figer.
+  verts) : #4 a validé #1 (19/19) + #2 (14/14) + #3 (21/21) ; #5 a validé #1 + #2 + #3 + #4
+  (19/19, 14/14, 21/21, 34/34) avant de figer.
 
 ---
 
@@ -325,30 +450,40 @@ Synthèse des 4 slices :
 - **Problème observé** : déplacer une entité kinematic sans traverser les murs ni le
   joueur demande la recherche du body (`userData`), un quaternion manuel, un raycast
   verrou avec la sémantique « exclut le joueur » et un `setTranslation` clampé.
-- **Jeux concernés** : #3 (1 entité mobile), #4 (2 entités mobiles + 1 projectile) —
-  2 des 4 slices.
-- **Duplication** : 35 LOC/jeu (`bodyOf`/`faceBody`/`moveBody`/`chaseBody`) recopiées.
+- **Jeux concernés** : #3 (1 entité mobile), #4 (2 entités mobiles + 1 projectile),
+  **#5 (5 entités mobiles : 3 survivants + 2 ennemis)** — **3 des 5 slices** (3e
+  reproduction, règle des trois atteinte).
+- **Duplication** : 35 LOC/jeu (#4) / **26 LOC/jeu (#5)** (`bodyOf`/`faceBody`/
+  `chaseBody` recopiées telles quelles des slices précédentes).
 - **Bénéfice attendu** : encapsuler la recherche du body, l'orientation, le verrou
   raycast et le pas clampé ; la sémantique « exclure le joueur » et
-  « kinematic = obstacle KCC » devient du savoir du core.
+  « kinematic = obstacle KCC » devient du savoir du core. (Le core maintient déjà une
+  `Map bodyById` interne non exposée — une `bodyOf` core serait triviale.)
 - **Risques** : contrat de mouvement à designer (verrou, face, maxStep) ; l'API doit
   rester déterministe (pas de `setLinearVelocity` implicite).
-- **Statut actuel** : **candidate, non implémentée**. Ré-évaluer si une 3e slice
-  nécessite ≥ 2 entités mobiles (règle des trois).
+- **Statut actuel** : **candidate, non implémentée — 3e reproduction atteinte (D002)**.
+  La promotion au core est **justifiée** ; décision à prendre (non faite sur #5 :
+  mesure de friction, core intact par politique de mission).
 
-### `zone(min, max, { onEnter, onExit, tick? })`
+### `zone(min, max, { entities, onEnter, onExit, tick? })`
 - **Problème observé** : une zone spatiale (piège, sortie, activation) = test d'inclusion
   AABB recopié + états d'arête (entrée/sortie) maintenus à la main + comportement
-  périodique.
+  périodique. **#5 ajoute la dimension multi-entités** : une zone doit suivre
+  simultanément **joueur + 3 survivants** → l'état d'arête doit être **par (zone, entité)**
+  (`Map` `${zone}:${entity}`), pas un simple booléen par zone.
 - **Jeux concernés** : #2 (sortie), #3 (extraction), #4 (piège + sortie + activation =
-  5 zones au total).
-- **Duplication** : 31 LOC/jeu, AABB écrite 3× sur #4.
-- **Bénéfice attendu** : fournir l'inclusion AABB + les arêtes enter/exit ; le
-  comportement spécifique (dégâts périodiques, victoire à condition multiple) reste côté
-  jeu (frontière normale).
+  5 zones au total), **#5 (feu + gaz + évacuation = 3 zones, dont 2 multi-entités)** —
+  **4 des 5 slices** (règle des trois dépassée).
+- **Duplication** : 31 LOC/jeu (#4) / **~46 LOC/jeu (#5**, helper `inZone` + état d'arête
+  par (zone, entité) + dégâts périodiques) ; le test AABB est écrit 3× sur #4.
+- **Bénéfice attendu** : fournir l'inclusion AABB + les arêtes enter/exit **par entité** ;
+  le comportement spécifique (dégâts périodiques, victoire à condition multiple) reste
+  côté jeu (frontière normale).
 - **Risques** : faibles (géométrie pure + arêtes) ; éviter de transformer l'API en
-  « trigger system » complet.
-- **Statut actuel** : **candidate, non implémentée**. Priorité basse.
+  « trigger system » complet ; **le support multi-entités est maintenant requis** (preuve #5).
+- **Statut actuel** : **candidate, non implémentée — 4e occurrence + multi-entités (D002)**.
+  La promotion au core est **justifiée** et doit inclure le multi-entités ; décision à
+  prendre (non faite sur #5 : mesure de friction, core intact par politique de mission).
 
 ---
 
@@ -441,21 +576,37 @@ Decision: `GAMELOOM.md` = manuel opérationnel autonome (≤ ~450 lignes) ;
 Reason: compacité pour les agents, préservation de la mémoire d'ingénierie, règle
 anti-gonflement.
 
-### D009 — Processus persistants Windows : lancement détaché + PID + log
-Status: en vigueur (règle machine, tous projets Windows).
+### D009 — Processus persistants Windows : cycle de vie complet, aucun survivant au tool call
+Status: en vigueur (règle machine, tous projets Windows). **Amendé sur #5.**
 Evidence: les harness nécessitent Chrome CDP (9224) + Vite preview (4173) qui survivent
-aux appels d'outils.
-Decision: `Popen` détaché (`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`), stdio vers
-fichiers log, PID conservé, arrêt explicite par PID + vérification du port.
-Reason: un processus avec handles hérités bloque la boucle d'outils jusqu'au timeout.
+aux appels d'outils. **Découverte #5 (bug OpenCode #32504)** : même un lancement
+détaché parfaitement propre (flags de détachement, stdio → fichiers, sans shell) peut
+laisser la boucle d'outils OpenCode bloquée après le retour — bug d'OpenCode, pas de
+fuite de handle au lancement. `npm.cmd`/`shell:true` et `node.exe` direct reproduisent
+tous deux le problème.
+Decision: **privilégier l'orchestrateur à cycle de vie complet** (`tools/run_harnesses.mjs`) :
+une commande démarre les serveurs (détachés, stdio → logs), attend le ready (polling
+court), exécute le(s) harness, tue l'arbre par PID, vérifie les ports libres et sort —
+**aucun processus persistant ne survit au tool call**. À défaut d'orchestrateur :
+lancement détaché (`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, stdio → fichiers log,
+PID conservé, arrêt explicite par PID + vérification du port) — mais ce mode est
+susceptible de bloquer la boucle d'outils (bug #32504).
+Reason: un processus avec handles hérités bloque la boucle d'outils ; et, plus
+fondamentalement, sous OpenCode/Windows même un détachement correct peut bloquer la
+boucle → la seule approche fiable est que le tool call possède tout le cycle de vie.
 
 ---
 
 ## Open questions
 
-- **`moveEntity` / `zone`** : re-tester sur le jeu #5 si une slice future contient ≥ 2
-  entités mobiles ou ≥ 3 zones ; une 3e reproduction de la friction déclenche la décision
-  (D002).
+- **`moveEntity` / `zone`** : **3e reproduction confirmée sur #5** (5 entités mobiles +
+  3 zones dont 2 multi-entités) → le seuil D002 est atteint : la décision de promotion au
+  core est maintenant **ouverte** (les deux candidates sont justifiées ; `zone` doit
+  inclure le multi-entités). Prochaine étape : concevoir + implémenter + valider +
+  documenter (ou décision explicite argumentée de ne pas le faire).
+- **Orchestrateur de harness** : le pattern `tools/run_harnesses.mjs` (cycle de vie
+  complet, workaround du bug OpenCode #32504) doit devenir le standard pour tous les
+  harness (remplacer le lancement détaché manuel des slices #1–#4).
 - **Recherche d'entité** : le jeu fait un scan O(n) de `rt.world.bodies` à chaque tick
   (`bodyOf`). Faut-il une API core « body par id » ? (Friction faible mais récurrente.)
 - **`_debug`** : formaliser en API de test contractuelle ou le retirer ? (Utilité

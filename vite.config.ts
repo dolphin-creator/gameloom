@@ -19,6 +19,7 @@ export default defineConfig({
         'temple.html': 'temple.html',
         'ruins.html': 'ruins.html',
         'dungeon.html': 'dungeon.html',
+        'outpost.html': 'outpost.html',
       },
     },
   },

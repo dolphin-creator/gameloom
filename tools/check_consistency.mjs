@@ -2,7 +2,10 @@
 // Compare les sources de vérité (fichiers réels) aux claims de GAMELOOM.md.
 // Ne modifie JAMAIS un fichier. exit 0 = cohérent · exit 1 = incohérence(s).
 // Sources de vérité : src/core/runtime.ts (version publique), vite.config.ts (entrées),
-// tools/run_harnesses.mjs (liste OFFICIAL), assets/*.glb (inventaire réel).
+// tools/run_harnesses.mjs (liste OFFICIAL), assets/ (contenu réel).
+// L'inventaire GLB n'est PLUS documenté dans GAMELOOM.md (découverte : `npm run glb --
+// inspect assets/<nom>.glb`) — le checker contrôle l'invariant du répertoire à la place
+// du catalogue, et les claims du manuel sont limités aux valeurs stables.
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -57,20 +60,24 @@ else if (official.length) ok('official harnesses: ' + official.length + ' (fichi
 const unofficial = readdirSync(join(ROOT, 'tools')).filter((f) => /^test_.+\.mjs$/.test(f)).map((f) => f.slice(0, -4)).filter((t) => !official.includes(t));
 if (unofficial.length) console.log('ℹ test_*.mjs hors suite officielle: ' + unofficial.join(', '));
 
-// ---------- 5. inventaire GLB: table GAMELOOM.md vs assets/*.glb (ensemble bidirectionnel) ----------
-const doc = read('GAMELOOM.md');
-const tableGlbs = [...doc.matchAll(/^\|\s*`([a-z0-9_]+\.glb)`\s*\|/gm)].map((m) => m[1]);
-const realGlbs = readdirSync(join(ROOT, 'assets')).filter((f) => f.endsWith('.glb'));
-const gIssues = [
-  ...tableGlbs.filter((g) => !realGlbs.includes(g)).map((g) => 'GLB documenté mais absent: ' + g),
-  ...realGlbs.filter((g) => !tableGlbs.includes(g)).map((g) => 'GLB présent mais non documenté: ' + g),
-];
-if (!tableGlbs.length) bad('GLB inventory', ['table d\'inventaire (| `x.glb` | …) introuvable dans GAMELOOM.md']);
-else if (gIssues.length) bad('GLB inventory: ' + realGlbs.length, gIssues);
-else ok('GLB inventory: ' + realGlbs.length + ' (table = assets/)');
+// ---------- 5. assets/ : contenu du répertoire = GLB uniquement, conteneurs glTF v2 valides ----------
+// L'inventaire détaillé n'est plus documenté dans GAMELOOM.md (découverte : `npm run glb --
+// inspect`) : l'invariant contrôlé = le répertoire ne contient que des GLB binaires valides.
+const assetAll = readdirSync(join(ROOT, 'assets'));
+const aIssues = [];
+for (const f of assetAll) {
+  const buf = readFileSync(join(ROOT, 'assets', f));
+  if (!f.endsWith('.glb')) { aIssues.push('fichier non-GLB dans assets/: ' + f); continue; }
+  if (buf.length < 12) { aIssues.push('GLB trop court: ' + f); continue; }
+  const magic = buf.subarray(0, 4).toString('ascii');
+  const ver = buf.readUInt32LE(4);
+  if (magic !== 'glTF' || ver !== 2) aIssues.push('GLB invalide (magic/version): ' + f + ' (' + magic + ' v' + ver + ')');
+}
+if (aIssues.length) bad('assets/ (GLB valides)', aIssues);
+else ok('assets/: ' + assetAll.length + ' fichiers, tous GLB v2 valides');
 
 // ---------- 6. claims mécaniques GAMELOOM.md (phrases stables, pas un parser de Markdown) ----------
-const gameCount = entries.filter((e) => e !== 'v02_test.html' && e !== 'viewer.html').length; // v02_test = page debug, viewer.html = outil d'inspection — pas des jeux
+const doc = read('GAMELOOM.md');
 let claimsOk = 0;
 const claim = (label, re, expected) => {
   const m = doc.match(re);
@@ -78,15 +85,14 @@ const claim = (label, re, expected) => {
   if (String(m[1]) !== String(expected)) bad('claim ' + label, ['documenté: ' + m[1], 'réel: ' + expected]);
   else claimsOk++;
 };
+const claimPresent = (label, re) => {
+  if (doc.match(re)) { claimsOk++; }
+  else bad('claim ' + label, ['absente de GAMELOOM.md (mécanisme de découverte perdu ?)']);
+};
 claim('version', /\|\s*`version`\s*\|\s*["'`]{0,2}(\d+\.\d+\.\d+)/, rtVer);
-claim('Vite entries', /multi-entry \((\d+) HTML\)/, entries.length);
-claim('official harnesses', /tests OFFICIELS \(build \+ preview \+ Chrome \+ (\d+) harnesses/, official.length);
-claim('jeux (shells)', /shells des (\d+) jeux/, gameCount);
-claim('jeux (slices)', /(\d+) vertical slices validées/, gameCount);
-claim('GLB (structure)', /assets\/ ← (\d+) GLB/, realGlbs.length);
-claim('GLB (inventaire)', /Inventaire des (\d+) GLB existants/, realGlbs.length);
-if (claimsOk === 7) ok('GAMELOOM mechanical claims: 7/7');
-else bad('GAMELOOM mechanical claims: ' + claimsOk + '/7', ['voir les claims ✗ ci-dessus']);
+claimPresent('découverte GLB (commande inspect documentée)', /npm run glb -- inspect/);
+if (claimsOk === 2) ok('GAMELOOM mechanical claims: 2/2');
+else bad('GAMELOOM mechanical claims: ' + claimsOk + '/2', ['voir les claims ✗ ci-dessus']);
 
 // ---------- bilan ----------
 console.log('');

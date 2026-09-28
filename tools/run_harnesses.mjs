@@ -1,16 +1,16 @@
 // Orchestrateur de tests GameLoom — mécanisme OFFICIEL (mécanisme unique de bout en bout:
 // build → vite preview (4173) → Chrome headless CDP (9224) → harnesses → cleanup garanti).
-// Windows-safe (bug OpenCode #32504: aucun processus persistant ne doit survivre au tool
-// call): ce script possède le cycle de vie COMPLET — pré-nettoyage ports → start
-// détaché (DETACHED|NEW_GROUP, logs tmp) → wait ready → run des harnesses (test_*.mjs)
-// → kill par arbre → vérification ports libres → exit.
+// Portable Windows/macOS/Linux: les serveurs sont lancés détachés (aucun stdio hérité,
+// logs → fichiers tmp, PIDs conservés) et tués par arbre/groupe sur TOUS les chemins de
+// sortie (normal, FAIL, exception, timeout, SIGINT/SIGTERM). Ports 4173/9224: l'orchestrateur
+// REFUSE de démarrer s'ils sont occupés — il ne tue jamais un processus qu'il n'a pas créé.
 // Usage: node tools/run_harnesses.mjs [test_xxx...] [--repeat N] [--build]
-//   - sans arg: les 6 harnesses (v02, headless, temple, ruins, dungeon, outpost)
+//   - sans arg: les 8 harnesses officiels (v02 + jeux #1–#7)
 //   - --build: npm run build + copie assets/ → dist/assets/ AVANT preview (entrée: npm test)
 //   - --repeat N: chaque harness lancé N fois (déterminisme/fingerprint)
-// Exit codes: 0 = tous verts · 1 = échec harness · 2 = infrastructure (serveur/timeout).
+// Exit codes: 0 = tous verts · 1 = échec harness · 2 = infrastructure (serveur/timeout/ports).
 import { spawn, execSync } from 'node:child_process';
-import { openSync, cpSync } from 'node:fs';
+import { openSync, cpSync, existsSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -18,11 +18,14 @@ import { dirname, join } from 'node:path';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const VITE = join(REPO, 'node_modules', 'vite', 'bin', 'vite.js');
-const CHROME = process.env.CHROME_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+// Chrome: override CHROME_PATH, sinon défaut par plateforme.
+const CHROME = process.env.CHROME_PATH ?? (
+  process.platform === 'win32' ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+    : process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+      : 'google-chrome-stable'
+);
 const PREVIEW_PORT = 4173;
 const CDP_PORT = 9224;
-const DETACHED = 0x00000008;
-const NEW_GROUP = 0x00000200;
 const tmp = os.tmpdir();
 
 const argv = process.argv.slice(2);
@@ -30,7 +33,12 @@ const buildFlag = argv.includes('--build');
 const repeatIdx = argv.indexOf('--repeat');
 const repeat = repeatIdx >= 0 ? Math.max(1, Number(argv[repeatIdx + 1] ?? 1)) : 1;
 const names = argv.filter((a) => a.startsWith('test_'));
-const harnesses = names.length ? names : ['test_v02', 'test_headless', 'test_temple', 'test_ruins', 'test_dungeon', 'test_outpost'];
+// SUITE OFFICIELLE (source de vérité unique — liste explicite, pas de découverte).
+const OFFICIAL = ['test_v02', 'test_headless', 'test_temple', 'test_ruins', 'test_dungeon', 'test_outpost', 'test_reactor', 'test_cargo'];
+const harnesses = names.length ? names : OFFICIAL;
+for (const h of harnesses) {
+  if (!existsSync(join(REPO, 'tools', `${h}.mjs`))) { console.error(`ERREUR: harness inconnu: ${h}`); process.exit(2); }
+}
 
 const T0 = Date.now();
 const ts = () => `+${((Date.now() - T0) / 1000).toFixed(1)}s`;
@@ -59,22 +67,14 @@ const waitPortClosed = async (port, ms) => {
   while (Date.now() < end) { if (!(await portOpen(port))) return true; await new Promise((r) => setTimeout(r, 400)); }
   return !(await portOpen(port));
 };
-// PIDs écouteurs d'un port via netstat (pré-nettoyage des résidus de sessions précédentes)
-function listenersOn(port) {
+// Kill portable d'un arbre de processus (spawn détaché → groupe/arbre propre):
+// win32 = taskkill /T sur l'arbre · POSIX = SIGKILL sur le groupe de processus (-pid).
+function killTree(pid) {
+  if (!pid) return;
   try {
-    const out = execSync('netstat -ano', { encoding: 'utf8' });
-    const pids = new Set();
-    for (const line of out.split(/\r?\n/)) {
-      const m = line.trim().match(/^(\S+)\s+(\d+\.\d+\.\d+\.\d+):(\d+)\s+(\S+)\s+(LISTENING)\s+(\d+)$/);
-      if (m && Number(m[3]) === port) pids.add(m[6]);
-    }
-    return [...pids];
-  } catch { return []; }
-}
-function killPids(pids) {
-  for (const pid of pids) {
-    try { execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' }); } catch { }
-  }
+    if (process.platform === 'win32') execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+    else process.kill(-pid, 'SIGKILL');
+  } catch { }
 }
 function spawnDetached(cmd, cmdArgs, logName) {
   const out = openSync(join(tmp, logName), 'w');
@@ -83,7 +83,7 @@ function spawnDetached(cmd, cmdArgs, logName) {
     stdio: ['ignore', out, out],
     detached: true,
     windowsHide: true,
-    creationFlags: process.platform === 'win32' ? DETACHED | NEW_GROUP : 0,
+    creationFlags: process.platform === 'win32' ? 0x00000008 | 0x00000200 : 0, // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
   });
   let dead = false;
   p.on('error', (e) => { log(`ERREUR SPAWN ${cmdName(cmd)}: ${e.code ?? e.message}`); dead = true; });
@@ -93,29 +93,39 @@ function spawnDetached(cmd, cmdArgs, logName) {
 const cmdName = (c) => String(c).split('\\').pop();
 
 const started = [];
+let tornDown = false;
+function teardown() {
+  if (tornDown) return;
+  tornDown = true;
+  for (const s of started) { if (!s.dead()) killTree(s.p.pid); }
+}
+
 const globalTimer = setTimeout(() => {
   log('TIMEOUT GLOBAL 12 min — kill forcé de tout');
   teardown();
   process.exit(2);
 }, 12 * 60 * 1000);
 globalTimer.unref?.();
-
-function teardown() {
-  for (const s of started) {
-    try { if (!s.dead()) execSync(`taskkill /F /T /PID ${s.p.pid}`, { stdio: 'ignore' }); } catch { }
-  }
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    log(`${sig} reçu — teardown des serveurs de test`);
+    teardown();
+    process.exit(130);
+  });
 }
 
 const results = [];
 (async () => {
-  // ---------- pré-nettoyage (résidus éventuels) ----------
+  // ---------- ports LIBRES au démarrage (refus net, jamais de kill d'écouteur inconnu) ----------
   for (const port of [PREVIEW_PORT, CDP_PORT]) {
-    const pids = listenersOn(port);
-    if (pids.length) { log(`pré-nettoyage port ${port}: kill ${pids.join(', ')}`); killPids(pids); await new Promise((r) => setTimeout(r, 1500)); }
+    if (await portOpen(port)) {
+      log(`FAIL: port ${port} déjà occupé — libérez-le avant de relancer (résidu vite preview / Chrome CDP d'un run de test précédent, ou lancement manuel). L'orchestrateur ne tue pas les processus qu'il n'a pas créés.`);
+      process.exit(2);
+    }
   }
 
   // ---------- start vite preview (node direct, AUCUN shell) ----------
-  const pv = spawnDetached(process.execPath, [VITE, 'preview'], 'opencode_pv.log');
+  const pv = spawnDetached(process.execPath, [VITE, 'preview'], 'gameloom_test_pv.log');
   started.push(pv);
   const pvOk = await waitPort(PREVIEW_PORT, 20000);
   if (!pvOk) { log(`FAIL: vite preview ne répond pas sur ${PREVIEW_PORT} (log: ${pv.logFile})`); teardown(); process.exit(2); }
@@ -126,18 +136,16 @@ const results = [];
     '--headless=new', '--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader', `--remote-debugging-port=${CDP_PORT}`,
     '--user-data-dir=' + join(tmp, 'chrome_gl_cdp'), '--window-size=1280,720', '--mute-audio', 'about:blank',
-  ], 'opencode_ch.log');
+  ], 'gameloom_test_ch.log');
   started.push(ch);
   const chOk = await waitPort(CDP_PORT, 20000);
   if (!chOk) { log(`FAIL: Chrome CDP ne répond pas sur ${CDP_PORT} (log: ${ch.logFile})`); teardown(); process.exit(2); }
   log(`chrome headless prêt (PID ${ch.p.pid})`);
 
   // ---------- 1 target page FRAIS par harness (isolation console) ----------
-  // Chaque harness choisit le 1er target 'page' de ce Chrome. Réutiliser la
-  // page du harness précédent ferait fuiter ses console.error dans la vérif
-  // console du suivant (ex: refus moveEntity volontaires de test_v02 → T8 headless).
-  // On crée d'abord le nouveau target (jamais 0 onglet: headless=new quitte
-  // sinon), puis on ferme les anciens.
+  // On crée d'abord le nouveau target (jamais 0 onglet: headless=new quitte sinon),
+  // on ferme les anciens, et on VÉRIFIE qu'il reste exactement 1 page. Le harness reçoit
+  // l'identité de SA target via CDP_TARGET_WS — il ne choisit jamais la 1re de la liste.
   async function freshPageTarget() {
     const base = `http://127.0.0.1:${CDP_PORT}/json`;
     let created = null;
@@ -148,9 +156,20 @@ const results = [];
     } catch (e) { log(`ERREUR: création du target page: ${e.message}`); return null; }
     const list = await (await fetch(base)).json();
     for (const t of list) {
-      if (t.type === 'page' && t.id !== created?.id) {
-        await fetch(`${base}/close/${t.id}`).catch(() => {});
-      }
+      if (t.type === 'page' && t.id !== created?.id) await fetch(`${base}/close/${t.id}`).catch(() => {});
+    }
+    // Les targets fermées disparaissent de /json avec un léger délai: on attend
+    // l'invariant « exactement 1 page » (le target créé) avant de passer la main.
+    let pages = [];
+    for (let i = 0; i < 25; i++) {
+      const after = await (await fetch(base)).json();
+      pages = after.filter((t) => t.type === 'page');
+      if (pages.length === 1 && pages[0].id === created.id) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    if (pages.length !== 1 || pages[0].id !== created.id) {
+      log(`ERREUR: 1 target page attendu après freshPageTarget, ${pages.length} observé(s)`);
+      return null;
     }
     return created;
   }
@@ -164,7 +183,11 @@ const results = [];
       log(`--- ${label} ---`);
       const code = await new Promise((res) => {
         const t = setTimeout(() => { try { child.kill(); } catch { } res('TIMEOUT'); }, 150000);
-        const child = spawn(process.execPath, [join(REPO, 'tools', `${h}.mjs`)], { cwd: REPO, stdio: 'inherit' });
+        const child = spawn(process.execPath, [join(REPO, 'tools', `${h}.mjs`)], {
+          cwd: REPO,
+          stdio: 'inherit',
+          env: { ...process.env, CDP_TARGET_WS: fresh.webSocketDebuggerUrl },
+        });
         child.on('exit', (c) => { clearTimeout(t); res(c); });
         child.on('error', (e) => { clearTimeout(t); res('SPAWN_ERR:' + e.message); });
       });
@@ -178,14 +201,12 @@ const results = [];
   teardown();
   const pvFree = await waitPortClosed(PREVIEW_PORT, 8000);
   const chFree = await waitPortClosed(CDP_PORT, 8000);
-  for (const port of [PREVIEW_PORT, CDP_PORT]) {
-    const leftover = listenersOn(port);
-    if (leftover.length) killPids(leftover);
-  }
   log(`PORT_4173=${pvFree ? 'LIBRE' : 'OCCUPIÉ'} PORT_9224=${chFree ? 'LIBRE' : 'OCCUPIÉ'}`);
   const failed = results.filter((r) => r.code !== 0 && r.code !== '0');
-  log(failed.length === 0 ? `BILAN ORCHESTRATEUR: ${results.length}/${results.length} harnesses OK` : `BILAN ORCHESTRATEUR: ${failed.length} échec(s)`);
-  process.exit(failed.length === 0 ? 0 : 1);
+  if (failed.length > 0) { log(`BILAN ORCHESTRATEUR: ${failed.length} échec(s)`); process.exit(1); }
+  if (!pvFree || !chFree) { log('FAIL: port(s) de test non libéré(s) après teardown — inspectez les processus'); process.exit(2); }
+  log(`BILAN ORCHESTRATEUR: ${results.length}/${results.length} harnesses OK`);
+  process.exit(0);
 })().catch((e) => {
   log('FATALE: ' + e.message);
   teardown();

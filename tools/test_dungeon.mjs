@@ -80,8 +80,15 @@ const dist2 = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const dist3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
 (async () => {
-  const list = await (await fetch(CDP_HTTP + '/json')).json();
-  const page = list.find((t) => t.type === 'page') ?? list[0];
+  // Target: transmise par l'orchestrateur (CDP_TARGET_WS) si présente, sinon 1er target
+  // page du Chrome CDP (lancement solo) — erreur explicite s'il n'y a pas de page.
+  let page;
+  if (process.env.CDP_TARGET_WS) page = { webSocketDebuggerUrl: process.env.CDP_TARGET_WS };
+  else {
+    const list = await (await fetch(CDP_HTTP + '/json')).json();
+    page = list.find((t) => t.type === 'page');
+  }
+  if (!page) { console.error('ERREUR: aucun target page CDP (lancer via run_harnesses.mjs ou ouvrir une page dans le Chrome CDP)'); process.exit(2); }
   const cdp = new CDP(page.webSocketDebuggerUrl);
   await cdp.connect();
   await cdp.send('Runtime.enable');
@@ -140,7 +147,7 @@ const dist3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
   const tA = (await GL.snap()).tick;
   await sleep(700);
   const tB = (await GL.snap()).tick;
-  check('T3a pause: tick figé pendant 700ms de temps réel', tA === tB, { tA, tB });
+  check('T3a pause: tick figé pendant 700ms de temps réel', Number.isInteger(tA) && tA === tB, { tA, tB });
   await GL.step(1);
   const tC = (await GL.snap()).tick;
   await GL.step(10);

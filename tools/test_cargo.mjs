@@ -3,9 +3,7 @@
 // puis émet un FINGERPRINT de ticks pour la comparaison de déterminisme (5 runs).
 // Préréquis : vite preview (4173) + Chrome headless CDP (9224) — ou lancer via
 // `node tools/run_harnesses.mjs test_cargo [--repeat N]`.
-import { createRequire } from 'node:module';
-const require = createRequire('C:/Users/jonat/gameloom/package.json');
-const WebSocket = require('ws');
+import WebSocket from 'ws';
 
 const CDP = 'http://127.0.0.1:9224';
 const URL_TARGET = process.env.URL_TARGET ?? 'http://localhost:4173/cargo.html';
@@ -20,9 +18,15 @@ function djb2(str) {
 }
 
 async function main() {
-  let r = await fetch(`${CDP}/json/new?about:blank`, { method: 'PUT' });
-  if (!r.ok) r = await fetch(`${CDP}/json/new?about:blank`);
-  const target = await r.json();
+  // Target: transmise par l'orchestrateur (CDP_TARGET_WS) si présente, sinon target
+  // page fraîche créée ici (lancement solo via npm run test:cargo).
+  let target;
+  if (process.env.CDP_TARGET_WS) target = { webSocketDebuggerUrl: process.env.CDP_TARGET_WS };
+  else {
+    let r = await fetch(`${CDP}/json/new?about:blank`, { method: 'PUT' });
+    if (!r.ok) r = await fetch(`${CDP}/json/new?about:blank`);
+    target = await r.json();
+  }
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   const send = (method, params = {}) => new Promise((resolve, reject) => {
     const id = ++msgId;

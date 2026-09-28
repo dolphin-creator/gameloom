@@ -87,8 +87,10 @@ async function calibrateLook() {
 
 async function main() {
   const globalTimer = setTimeout(() => { console.error('TIMEOUT HARNESS 150s'); process.exit(2); }, 150000);
-  const list = await (await fetch(`${CDP}/json`)).json();
-  const page = list.find((t) => t.type === 'page');
+  // Target: transmise par l'orchestrateur (CDP_TARGET_WS) si présente, sinon 1er target
+  // page du Chrome CDP (lancement solo) — erreur explicite s'il n'y a pas de page.
+  let page = process.env.CDP_TARGET_WS ? { webSocketDebuggerUrl: process.env.CDP_TARGET_WS } : null;
+  if (!page) page = (await (await fetch(`${CDP}/json`)).json()).find((t) => t.type === 'page');
   if (!page) { console.error('ERREUR: aucun target page CDP'); process.exit(2); }
   ws = new WebSocket(page.webSocketDebuggerUrl);
   ws.on('message', (data) => {

@@ -83,29 +83,31 @@ tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex der
 ```
 ~/gameloom/
 ├── GAMELOOM.md ← ce fichier · EXPERIMENTS.md ← mémoire d'ingénierie · JOURNAL.md ← archive
-├── index/temple/ruins/dungeon/outpost.html ← shells des 5 jeux (canvas #game, HUD, overlays)
+├── index/temple/ruins/dungeon/outpost/reactor/cargo.html ← shells des 7 jeux (canvas #game, HUD, overlays)
 │   · v02_test.html ← page de test des primitives core v0.2 (pas un jeu)
 ├── package.json ← scripts : dev, build, preview, glb, test (orchestrateur),
-│   test:v02/headless/temple/ruins/dungeon/outpost
-├── tsconfig.json · vite.config.ts ← TS strict noEmit · multi-entry (6 HTML), base './'
-├── assets/ ← 11 GLB : barrel, crate, target, switch, guardian, artifact, ruins_column,
-│            dungeon_key, dungeon_mage, dungeon_spikes, survivor
+│   test:v02/headless/temple/ruins/dungeon/outpost/reactor/cargo
+├── tsconfig.json · vite.config.ts ← TS strict noEmit · multi-entry (8 HTML), base './'
+├── assets/ ← 14 GLB : barrel, crate, target, switch, guardian, artifact, ruins_column,
+│            dungeon_key, dungeon_mage, dungeon_spikes, survivor, reactor, socket, energy_cell
 ├── src/core/ ← LE CORE (types, ecs, events, actions, glbs, runtime, index) — modifier
 │             seulement selon la politique documentaire + après EXPERIMENTS.md
-├── src/game/ ← 5 jeux (références d'usage) : main.ts (#1 Barrel Blaster),
+├── src/game/ ← 7 jeux (références d'usage) : main.ts (#1 Barrel Blaster),
 │              temple/main.ts (#2), ruins/main.ts (#3), dungeon/main.ts (#4),
-│              outpost/main.ts (#5, zones + moveEntity core) · v02_test/main.ts (page debug)
+│              outpost/main.ts (#5, zones + moveEntity core), reactor/main.ts (#6),
+│              cargo/main.ts (#7) · v02_test/main.ts (page debug)
 └── tools/    ← run_harnesses.mjs (ORCHESTRATEUR officiel, §15), cli.mjs (CLI `glb`),
-                test_v02/headless/temple/ruins/dungeon/outpost.mjs (harness CDP 9224),
+                test_v02/headless/temple/ruins/dungeon/outpost/reactor/cargo.mjs (harness CDP 9224),
                 make_glb.mjs, diag_*.mjs (one-shots), blender/ (make_assets.py, make_ruins_assets.py,
                 make_dungeon_assets.py)
 ```
 
 `src/core/runtime.ts` = moteur (Rapier+KCC, tick, règles, actions core, mouvement/zones v0.2, debug API) ;
-`types.ts` = types + namespace `com.gameloom.v0`. Nouveau jeu : lire `src/game/outpost/main.ts`
-(jeu le plus récent : moveEntity + zones core) ou `src/game/dungeon/main.ts` (dense).
+`types.ts` = types + namespace `com.gameloom.v0`. Nouveau jeu : lire `src/game/cargo/main.ts`
+(jeu le plus récent) ou `src/game/outpost/main.ts` (moveEntity + zones core) ou
+`src/game/dungeon/main.ts` (dense).
 
-**Inventaire des 11 GLB existants** (capacités = métadonnées `com.gameloom.v0`, vérifiable
+**Inventaire des 14 GLB existants** (capacités = métadonnées `com.gameloom.v0`, vérifiable
 par `npm run glb -- inspect assets/<nom>.glb`) :
 
 | Asset | Body | Capacités (`components`) |
@@ -121,6 +123,9 @@ par `npm run glb -- inspect assets/<nom>.glb`) :
 | `dungeon_mage.glb` | kinematic | `Health.max=80` (entité mobile, §5) |
 | `dungeon_spikes.glb` | static | — (plateforme 3×3 m de pointes) |
 | `survivor.glb` | kinematic | `Health.max=100` (entité mobile v0.2, §5) |
+| `reactor.glb` | static | — (réacteur #6) |
+| `socket.glb` | static | — (socket #7) |
+| `energy_cell.glb` | static | — (cellule d'énergie #7) |
 
 ## 4. Quick Start
 
@@ -132,8 +137,9 @@ npx tsc --noEmit                                     # 2. typecheck (pas de scri
 npm run build && cp assets/*.glb dist/assets/        # 3. build prod + copie GLB (OBLIGATOIRE)
 npm run preview                                      # 4. servir le build (http://localhost:4173)
 #    → #1: / · #2: /temple.html · #3: /ruins.html · #4: /dungeon.html · #5: /outpost.html
+#    · #6: /reactor.html · #7: /cargo.html
 #    · page debug v0.2: /v02_test.html
-node tools/run_harnesses.mjs --build                 # 5. tests OFFICIELS (build + preview + Chrome + 6 harnesses, §15)
+node tools/run_harnesses.mjs --build                 # 5. tests OFFICIELS (build + preview + Chrome + 8 harnesses, §15)
 npm run glb -- inspect assets/barrel.glb             # 6. CLI glb (outillage asset)
 ```
 
@@ -142,12 +148,13 @@ npm run glb -- inspect assets/barrel.glb             # 6. CLI glb (outillage ass
   build production (4173).
 - `npm run glb -- <args>` : le `--` sépare le script npm des arguments CLI.
 - **`node tools/run_harnesses.mjs` (= `npm test`) est le mécanisme officiel** : un seul
-  cycle de vie (build optionnel → preview 4173 → Chrome CDP 9224 → harnesses → teardown
-  garanti, ports vérifiés). Les scripts `test:<nom>` individuels supposent un Chrome CDP
-  déjà lancé (§15).
+  cycle de vie (build optionnel → preview 4173 → Chrome CDP 9224 → 8 harnesses officiels →
+  teardown garanti sur tous les chemins de sortie, ports 4173/9224 vérifiés libres —
+  s'ils sont occupés au démarrage, l'orchestrateur refuse de démarrer, exit 2). Les scripts
+  `test:<nom>` individuels supposent un Chrome CDP déjà lancé (§15).
 - Chaque harness cible son jeu via `URL_TARGET` (défauts `http://localhost:4173/`,
-  `/temple.html`, `/ruins.html`, `/dungeon.html`, `/outpost.html`, `/v02_test.html`)
-  — overridable par la variable `URL_TARGET`.
+  `/temple.html`, `/ruins.html`, `/dungeon.html`, `/outpost.html`, `/reactor.html`,
+  `/cargo.html`, `/v02_test.html`) — overridable par la variable `URL_TARGET`.
 
 ## 5. Créer un jeu
 
@@ -463,20 +470,26 @@ Escalade (du moins coûteux au plus coûteux) — ne monter que si le niveau pr�
 ## 15. CDP / harness déterministe
 
 **Mécanisme officiel : `node tools/run_harnesses.mjs`** (= `npm test`). Cycle de vie complet
-et garanti : pré-nettoyage des ports → build (`--build`) → `vite preview` (4173) +
-**Chrome headless CDP (9224)** lancés détachés (logs tmp, PID conservés) → chaque harness
-(`tools/test_*.mjs`, **1 target page frais par harness** — isolation de la console) →
-teardown par arbre + vérification que 4173/9224 sont libres. Usage :
-`node tools/run_harnesses.mjs [test_xxx...] [--repeat N] [--build]` (sans arg : les 6
-harnesses — `test_v02`, `test_headless`, `test_temple`, `test_ruins`, `test_dungeon`,
-`test_outpost`) · exit 0 = tous verts, 1 = échec harness, 2 = infrastructure. Windows-safe
-(aucun processus persistant ne survit au tool call).
+et garanti (portable Windows/macOS/Linux, Node pur) : build (`--build`) → `vite preview`
+(4173) + **Chrome headless CDP (9224)** lancés détachés (logs tmp, PID conservés) → chaque
+harness (`tools/test_*.mjs`, **1 target page frais par harness** — isolation de la console ;
+l'orchestrateur transmet l'identité de la target via `CDP_TARGET_WS` et vérifie qu'il
+reste exactement 1 page) → teardown par arbre sur **tous** les chemins de sortie (normal,
+FAIL, exception, timeout, Ctrl+C/SIGTERM) + vérification que 4173/9224 sont libres.
+Ports 4173/9224 **libres au démarrage** : s'ils sont occupés, l'orchestrateur **refuse
+de démarrer** (exit 2) — il ne tue jamais un processus qu'il n'a pas créé. Usage :
+`node tools/run_harnesses.mjs [test_xxx...] [--repeat N] [--build]` (sans arg : les 8
+harnesses officiels — `test_v02` + `test_headless` #1, `test_temple` #2, `test_ruins` #3,
+`test_dungeon` #4, `test_outpost` #5, `test_reactor` #6, `test_cargo` #7) · exit 0 = tous
+verts, 1 = échec harness, 2 = infrastructure. Chrome : défaut par plateforme, override
+`CHROME_PATH`.
 
 `test_headless.mjs` = harness de référence ; les autres = **même pattern** (CDP `ws` →
 `Runtime.evaluate`, `check()`/bilan, temps par `pause()`/`step(n)`, `URL_TARGET` propre au
-jeu ; #3/#4/#5 comparent un **fingerprint de ticks** entre runs). Nouveau jeu : dupliquer
-un harness, changer `URL_TARGET` + checks. Portable Windows/Linux. Si un harness est lancé
-**seul** (`npm run test:<nom>`), il suppose la préparation manuelle ci-dessous :
+jeu ; #3–#7 comparent un **fingerprint de ticks** entre runs). Nouveau jeu : dupliquer
+un harness, changer `URL_TARGET` + checks. Si un harness est lancé **seul**
+(`npm run test:<nom>`), il suppose la préparation manuelle ci-dessous (sans
+`CDP_TARGET_WS`, il cible le 1er target `page` du Chrome CDP) :
 
 1. **Chrome headless déjà lancé** (port CDP **9224**, WebGL SwiftShader, sans GPU) :
     - Linux : `google-chrome-stable --headless=new --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader --remote-debugging-port=9224 --user-data-dir=/tmp/chrome_gl --window-size=1280,720 --mute-audio about:blank`
@@ -558,4 +571,4 @@ Non implémenté en v0.2 — ne pas inventer d'API :
 
 ---
 
-*Version : GameLoom v0.2 — 5 vertical slices validées (Barrel Blaster, Temple Escape, Ruins Raid, Dungeon Assault, Outpost Rescue). Historique, preuves et décisions : `EXPERIMENTS.md`.*
+*Version : GameLoom v0.2 — 7 vertical slices validées (Barrel Blaster, Temple Escape, Ruins Raid, Dungeon Assault, Outpost Rescue, Reactor Defense, Cargo Run). Historique, preuves et décisions : `EXPERIMENTS.md`.*

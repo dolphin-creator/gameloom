@@ -1011,7 +1011,7 @@ Reason: la dimension multi-entités rend le booléen par zone insuffisant ; les 
 composent avec les règles déclaratives (`rt.on`) déjà validées sur les 5 jeux.
 
 ### D012 — Orchestrateur `run_harnesses.mjs` = mécanisme officiel unique + 1 target page frais par harness
-Status: en vigueur (v0.2).
+Status: en vigueur (v0.2). **Amendé (audit infra de test, 2026-09-28).**
 Evidence: bug OpenCode #32504 (D009) + **leak console inter-harnesses** découvert v0.2 :
 les harnesses partagent le Chrome CDP et choisissent le 1er target `page` — réutiliser
 la page du harness précédent a fait fuiter les `console.error` volontaires de `test_v02`
@@ -1019,8 +1019,16 @@ dans le check T8 de `test_headless` (18/19).
 Decision: `node tools/run_harnesses.mjs` (= `npm test`) est la procédure officielle de
 tests (build → preview 4173 → Chrome 9224 → harnesses → teardown + ports vérifiés) ;
 **chaque harness reçoit un target page neuf** (créé avant de fermer l'ancien).
+**Amendement** : la suite officielle = **8 harnesses** (`test_v02` + #1–#7 — liste explicite
+dans l'orchestrateur ; `test_reactor`/`test_cargo` en étaient absents, gap documenté §#7) ;
+l'orchestrateur transmet l'**identité** de la target fraîche via `CDP_TARGET_WS` (les
+harnesses ne choisissent plus le 1er target de la liste, plus de fallback `list[0]`,
+invariant « exactement 1 page » vérifié après création) ; teardown **portable** (win32 :
+`taskkill /F /T` · POSIX : SIGKILL du groupe de processus) + **SIGINT/SIGTERM** → plus
+d'orphelins sur Ctrl+C ; **port occupé au démarrage = refus net (exit 2)** au lieu de
+tuer l'écouteur inconnu — l'orchestrateur ne manipule que les processus qu'il a créés.
 Reason: cycle de vie garanti par le tool call + isolation stricte des assertions console
-par target.
+par target + sécurité des processus extérieurs + portabilité sans dépendance.
 
 ---
 

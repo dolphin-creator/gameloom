@@ -656,6 +656,18 @@ fichier ni GLB, n'écrit aucune metadata, n'appelle aucun backend — l'agent re
 responsable de ce qu'il fait du choix ensuite. Le candidat sélectionné est visuellement
 évident (surbrillance + badge).
 
+**Contrat de choix (agent/humain)** — deux canaux complémentaires, sans aucun backend :
+**Pull** : `window.GameLoomViewer.getChoice()` → `{ selected }` · **Push** :
+`window.addEventListener("gameloom:choice", handler)` — émis à chaque sélection (bouton
+CHOOSE ou `GameLoomViewer.selectChoice`), après la mise à jour de l'état/URL ;
+`event.detail.selected` contient l'URI choisie (`detail` strictement JSON-sérialisable :
+`selected`, `index`, `type`).
+
+The viewer does not communicate with a specific agent framework. An external agent/browser
+harness may observe the choice through the pull API, the browser event, polling, CDP, or
+another external mechanism. For polling-based integrations, use a finite timeout; never
+block indefinitely.
+
 ### `window.GameLoomViewer` — API JSON pour agent/debug
 
 Tout retour est sérialisable en JSON (aucun objet Three.js exposé) ; les méthodes sont sûres

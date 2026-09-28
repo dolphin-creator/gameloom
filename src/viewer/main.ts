@@ -833,6 +833,9 @@ function selectChoice(uri: string): R {
   selected = uri;
   applySelectedVisual();
   syncChoiceUrl();
+  window.dispatchEvent(new CustomEvent('gameloom:choice', {
+    detail: { selected: uri, index: cands.indexOf(cand), type: cand.kind },
+  }));
   return { ok: true, selected: uri };
 }
 function renderCardError(c: Cand, metaEl: HTMLElement) {

@@ -1068,6 +1068,21 @@ gameplay ; la séparation stricte garantit qu'aucune évolution du viewer ne peu
 les jeux, et l'absence totale de logique réseau permet toute exposition arbitraire
 (réseau local, VPS, Tailscale, reverse proxy) sans modifier GameLoom.
 
+### D015 — Choice Mode : contrat de choix en push via l'événement navigateur `gameloom:choice`
+Status: en vigueur (2026-09-28).
+Evidence: le pull (`getChoice()`) exigeait de l'agent un polling ou un CDP dédié ; un
+canal push existant « de l'autre côté » (framework, MCP, backend) n'était pas souhaitable
+— le viewer devait rester agent-agnostic.
+Decision: `selectChoice` (bouton CHOOSE ou API) émet, APRÈS l'update état/URL,
+`window.dispatchEvent(new CustomEvent('gameloom:choice', { detail: { selected, index,
+type } }))` — `detail` strictement JSON-sérialisable (aucun objet Three.js/DOM). Le
+viewer ne tente PAS de réveiller un agent : le moyen d'observation (pull, push, polling à
+timeout fini, CDP) est l'affaire du harness externe. ~5 lignes, zéro dépendance,
+CORE_CHANGED = NO.
+Reason: un événement navigateur standard est le seul canal push universel, sérialisable et
+sans couplage entre une page et tout processus externe — aucun des canaux « intelligents »
+(websocket/MCP/daemon) n'était justifié pour un simple choix d'asset.
+
 ---
 
 ## Open questions

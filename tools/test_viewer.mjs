@@ -401,6 +401,32 @@ function teardown() {
   check('S10 choice: URI inconnue refusée proprement ({ok:false, error}, sans exception)', selBad?.ok === false && typeof selBad?.error === 'string', selBad);
   noErrorSegment('S10 choice GLB');
 
+  // ---------- S10d: PUSH — window event "gameloom:choice" (contrat complémentaire du pull) ----------
+  // Le listener est installé AVANT toute sélection ; le pont localStorage permet de
+  // vérifier (après navigation) qu'INSPECT n'a pas émis d'événement CHOOSE.
+  await cdp.eval(`localStorage.setItem('gc_events', '[]');
+    window.addEventListener('gameloom:choice', (e) => {
+      const a = JSON.parse(localStorage.getItem('gc_events') || '[]');
+      a.push(e.detail);
+      localStorage.setItem('gc_events', JSON.stringify(a));
+    });`);
+  const evCount0 = await cdp.eval('JSON.parse(localStorage.getItem("gc_events")).length');
+  check('S10d push: aucun événement avant sélection (listener installé avant)', evCount0 === 0, { evCount0 });
+  await cdp.eval("document.querySelectorAll('.btn-choose')[0].click()");
+  const evA = await cdp.eval('JSON.parse(localStorage.getItem("gc_events"))');
+  const getEvA = await cdp.eval('JSON.stringify(GameLoomViewer.getChoice())');
+  check('S10d push: CHOOSE A (bouton réel) — exactement 1 événement, detail.selected === URI A, getChoice() === URI A',
+    evA.length === 1 && evA[0].selected === '/assets/ammo_military.glb' && JSON.parse(getEvA).selected === '/assets/ammo_military.glb', evA);
+  const evRoundTrip = await cdp.eval(`(() => { const s = JSON.stringify(JSON.parse(localStorage.getItem('gc_events'))); const p = JSON.parse(s); return p.length === 1 && p[0].selected === '/assets/ammo_military.glb'; })()`);
+  check('S10d push: payload JSON.stringify-compatible (round-trip) + champs {selected,index,type} GLB',
+    evA[0].index === 0 && evA[0].type === 'glb' && evRoundTrip === true, evA[0]);
+  await cdp.eval("document.querySelectorAll('.btn-choose')[1].click()");
+  const evB = await cdp.eval('JSON.parse(localStorage.getItem("gc_events"))');
+  const getEvB = await cdp.eval('JSON.stringify(GameLoomViewer.getChoice())');
+  check('S10d push: CHOOSE B — exactement 1 nouvel événement (2 au total), detail.selected === URI B, getChoice() === URI B',
+    evB.length === 2 && evB[1].selected === '/assets/ammo_scifi.glb' && JSON.parse(getEvB).selected === '/assets/ammo_scifi.glb', evB.map((e) => e.selected));
+  noErrorSegment('S10d push GLB');
+
   // ---------- S10b: INSPECT — bouton réel → viewer mono-asset existant ----------
   await cdp.eval('document.querySelectorAll(".btn-inspect")[1].click()');
   const api10b = await waitApi();
@@ -409,6 +435,8 @@ function teardown() {
   const asset10b = await cdp.eval('JSON.stringify(GameLoomViewer.asset())');
   check('S10b INSPECT: bouton → viewer mono-asset ?asset= (mode single + asset correct chargé)',
     api10b && loaded10b && mode10b === 'single' && JSON.parse(asset10b).uri === '/assets/ammo_scifi.glb', { mode10b, asset: asset10b });
+  const evInspect = await cdp.eval('JSON.parse(localStorage.getItem("gc_events") || "[]").length');
+  check('S10b INSPECT: aucun événement gameloom:choice artificiel (compteur inchangé = 2 après navigation)', evInspect === 2, { evInspect });
   noErrorSegment('S10b inspect');
 
   // ---------- S10c: retour Choice Mode — URL partagée conserve la sélection ----------
@@ -453,6 +481,22 @@ function teardown() {
   check('S12 choice images: sélection + getChoice() + état URL &selected=',
     sel12?.ok === true && JSON.parse(get12).selected === '/assets/_viewer_tmp_img_b.png' && /selected=/.test(url12), get12);
   noErrorSegment('S12 choice images');
+
+  // ---------- S12b: PUSH — window event "gameloom:choice" sur des images (type=image) ----------
+  await cdp.eval(`localStorage.setItem('gc_img', '[]');
+    window.addEventListener('gameloom:choice', (e) => {
+      const a = JSON.parse(localStorage.getItem('gc_img') || '[]');
+      a.push(e.detail);
+      localStorage.setItem('gc_img', JSON.stringify(a));
+    });`);
+  await cdp.eval("document.querySelectorAll('.btn-choose')[0].click()");
+  const evImg = await cdp.eval('JSON.parse(localStorage.getItem("gc_img"))');
+  const getImg = await cdp.eval('JSON.stringify(GameLoomViewer.getChoice())');
+  check('S12b push images: CHOOSE image A (bouton réel) — 1 événement, detail.selected === URI A, getChoice() === URI A, type=image index=0',
+    evImg.length === 1 && evImg[0].selected === '/assets/_viewer_tmp_img_a.png' && evImg[0].type === 'image' && evImg[0].index === 0 && JSON.parse(getImg).selected === '/assets/_viewer_tmp_img_a.png', evImg[0]);
+  const imgRoundTrip = await cdp.eval(`(() => { const s = JSON.stringify(JSON.parse(localStorage.getItem('gc_img'))); const p = JSON.parse(s); return p.length === 1 && p[0].selected === '/assets/_viewer_tmp_img_a.png'; })()`);
+  check('S12b push images: payload JSON.stringify-compatible (round-trip)', imgRoundTrip === true, evImg[0]);
+  noErrorSegment('S12b push images');
 
   // ---------- bilan + teardown ----------
   cdp.close();

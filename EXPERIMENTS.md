@@ -23,7 +23,7 @@
 
 ## Experimental methodology
 
-Méthode de travail validée sur les 5 slices :
+Méthode de travail validée sur les 7 slices :
 
 - **Vertical slices** : un jeu complet et jouable (boot → gameplay → victoire/mort →
   harness) plutôt qu'une fonctionnalité isolée. Chaque slice valide une ou plusieurs
@@ -1035,9 +1035,9 @@ par target + sécurité des processus extérieurs + portabilité sans dépendanc
 ## Open questions
 
 - **`_debug`** : formaliser en API de test contractuelle ou le retirer ? (Utilité
-  prouvée sur les 6 harnesses ; statut actuel : non stable.)
+  prouvée sur les 8 harnesses ; statut actuel : non stable.)
 - **Polish KCC** : slide en pente, accélération/décélération — si un jeu futur en a
-  besoin (les 5 slices : non requis).
+  besoin (les 7 slices : non requis).
 - **Animation / root-motion** : quand le 1er asset animé est réellement nécessaire
   (aucun à ce jour).
 - **Déterminisme cross-machine** : un même fingerprint entre Linux et Windows
@@ -1056,7 +1056,7 @@ par target + sécurité des processus extérieurs + portabilité sans dépendanc
 Ce que les **prochaines expériences** devraient mettre sous pression :
 
 1. **10+ entités mobiles** : performance (coût WASM Rapier, sync mesh, raycast
-   verrouillage) — les 5 slices n'ont jamais dépassé 5 entités mobiles.
+   verrouillage) — les 7 slices n'ont jamais dépassé 5 entités mobiles.
 2. **Asset animé** (root motion) : valider l'absence actuelle et le coût d'ajout
    (`AnimationMixer` côté core ou côté jeu ?).
 3. **Objet interactif avec état de proximité** (pattern « clé » du #4) : vérifier si le

@@ -143,7 +143,7 @@ node tools/run_harnesses.mjs --build                 # 5. tests OFFICIELS (build
 npm run glb -- inspect assets/barrel.glb             # 6. CLI glb (outillage asset)
 ```
 
-- `npm run build` = `tsc --noEmit && vite build` ; chaque jeu = une entrée HTML dans `rollupOptions.input` (`vite.config.ts`, 6 entrées).
+- `npm run build` = `tsc --noEmit && vite build` ; chaque jeu = une entrée HTML dans `rollupOptions.input` (`vite.config.ts`, 8 entrées).
 - **Ne PAS tester sur `npm run dev`** (5173) : HMR = double-boot (2 runtimes) → toujours
   build production (4173).
 - `npm run glb -- <args>` : le `--` sépare le script npm des arguments CLI.

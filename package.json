@@ -1,7 +1,7 @@
 {
   "name": "gameloom",
-  "version": "0.1.0",
-  "description": "GameLoom v0.1 - slice Barrel Blaster",
+  "version": "0.2.0",
+  "description": "GameLoom v0.2 — moteur 3D (GLB → jeu jouable) + 7 vertical slices",
   "type": "module",
   "scripts": {
     "dev": "vite",

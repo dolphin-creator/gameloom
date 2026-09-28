@@ -94,9 +94,10 @@ tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex der
 ├── package.json ← scripts : dev, build, preview, viewer, glb, check:consistency, test (orchestrateur),
 │   test:v02/headless/temple/ruins/dungeon/outpost/reactor/cargo, test:viewer (harness autonome §19)
 ├── tsconfig.json · vite.config.ts ← TS strict noEmit · multi-entry (9 HTML), base './'
-├── assets/ ← 16 GLB : barrel, crate, target, switch, guardian, artifact, ruins_column,
+├── assets/ ← 19 GLB : barrel, crate, target, switch, guardian, artifact, ruins_column,
 │            dungeon_key, dungeon_mage, dungeon_spikes, survivor, reactor, socket,
-│            energy_cell, supply_crate, industrial_generator
+│            energy_cell, supply_crate, industrial_generator,
+│            ammo_military, ammo_scifi, ammo_industrial
 ├── src/core/ ← LE CORE (types, ecs, events, actions, glbs, runtime, index) — modifier
 │             seulement selon la politique documentaire + après EXPERIMENTS.md
 ├── src/game/ ← 7 jeux (références d'usage) : main.ts (#1 Barrel Blaster),
@@ -116,7 +117,7 @@ tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex der
 (jeu le plus récent) ou `src/game/outpost/main.ts` (moveEntity + zones core) ou
 `src/game/dungeon/main.ts` (dense).
 
-**Inventaire des 16 GLB existants** (capacités = métadonnées `com.gameloom.v0`, vérifiable
+**Inventaire des 19 GLB existants** (capacités = métadonnées `com.gameloom.v0`, vérifiable
 par `npm run glb -- inspect assets/<nom>.glb`) :
 
 | Asset | Body | Capacités (`components`) |
@@ -137,6 +138,9 @@ par `npm run glb -- inspect assets/<nom>.glb`) :
 | `energy_cell.glb` | static | — (cellule d'énergie #7) |
 | `supply_crate.glb` | dynamic (18 kg) | `Health.max=40` (caisse de ravitaillement ~1 m) |
 | `industrial_generator.glb` | static | — (générateur industriel ~1,35 m) |
+| `ammo_military.glb` | dynamic (12 kg) | `Health.max=30` (caisse de munitions — variante militaire moderne) |
+| `ammo_scifi.glb` | dynamic (12 kg) | `Health.max=30` (caisse de munitions — variante science-fiction) |
+| `ammo_industrial.glb` | dynamic (12 kg) | `Health.max=30` (caisse de munitions — variante industriel/récupéré) |
 
 ## 4. Quick Start
 
@@ -593,8 +597,10 @@ Non implémenté en v0.2 — ne pas inventer d'API :
 
 ## 19. Asset Viewer (outil d'inspection GLB)
 
-Le viewer est un **outil**, pas un jeu ni un éditeur : un agent charge un GLB par URI et
-donne à l'humain une URL pour l'inspecter visuellement. Hors runtime — **aucun** import du
+Le viewer est un **outil**, pas un jeu ni un éditeur : un agent charge un asset par URI et
+donne à l'humain une URL pour l'inspecter visuellement — **mono-asset** (`?asset=`, GLB)
+ou **HUMAN CHOICE** (`?choice=`, plusieurs GLB et/ou images en simultané sur UNE page, §19.1).
+Hors runtime — **aucun** import du
 core (pas de Rapier, pas de Miniplex, pas de gameplay) ; le viewer lit le GLB + l'extension
 `com.gameloom.v0` par lui-même, et le collider est un overlay géométrique Three.js
 (PAS un body Rapier).
@@ -603,14 +609,17 @@ core (pas de Rapier, pas de Miniplex, pas de gameplay) ; le viewer lit le GLB + 
 npm run build && cp assets/*.glb dist/assets/        # 1. build (comme les jeux)
 npm run viewer -- --host 127.0.0.1 --port 5174      # 2. viewer sur 127.0.0.1:5174
 # → http://127.0.0.1:5174/viewer.html?asset=/assets/guardian.glb
+# → http://127.0.0.1:5174/viewer.html?choice=/assets/a.glb,/assets/b.glb,/assets/c.glb   (Choice Mode)
 ```
 
 - **Host/port** : défauts `127.0.0.1:5174`, **overrideables** — `npm run viewer -- --host 0.0.0.0 --port 8080`
   (ou n'importe quel sous-ensemble) ; `vite preview` sert le build. GameLoom ne devine ni
   n'ouvre rien : exposition réseau (proxy inverse, VPS, Tailscale, réseau privé…) =
   infrastructure extérieure, aucune logique réseau dans le repo.
-- **URI = contrat asset** : `?asset=/assets/foo.glb` (relative à l'origine du serveur —
-  compatible reverse proxy / chemin distant) ; aucune liste d'assets codée en dur.
+- **URI = contrat asset** : `?asset=/assets/foo.glb` (mono-asset) ou
+  `?choice=/assets/a.glb,/assets/b.glb,…` (Choice Mode — liste séparée par des virgules,
+  sans manifeste, sans liste codée en dur) ; relative à l'origine du serveur — compatible
+  reverse proxy / chemin distant ; **aucun** état serveur.
 - **GLB régénéré pendant que le viewer tourne** : pas de redémarrage du serveur —
   `vite preview` ressert le fichier depuis `dist/` à chaque requête (copier le GLB
   régénéré dans `dist/assets/` et recharger la page suffit). Si le navigateur garde
@@ -626,27 +635,51 @@ npm run viewer -- --host 127.0.0.1 --port 5174      # 2. viewer sur 127.0.0.1:51
   détecté), grille, axes.
 - **Animations GLTF** : liste nom + durée, Play/Pause/Stop, loop, vitesse, timeline
   (`AnimationMixer` Three.js — aucune logique de gameplay nécessaire).
-- **Panneau** : infos GLB (scènes/meshes/vertices/triangles/matériaux/textures/animations/
-  skinned meshes/bones/bbox) + metadata `com.gameloom.v0` réelles (collider, physics,
-  components — rien d'inventé).
+ - **Panneau** : infos GLB (scènes/meshes/vertices/triangles/matériaux/textures/animations/
+   skinned meshes/bones/bbox) + metadata `com.gameloom.v0` réelles (collider, physics,
+   components — rien d'inventé).
+
+### 19.1 Choice Mode (HUMAN CHOICE)
+
+`?choice=` présente plusieurs candidats **simultanément sur UNE SEULE PAGE** pour que
+l'humain compare et choisisse avant que l'agent agisse. **GLB** : viewport Three.js
+indépendant par candidat (OrbitControls, auto-framing, matériaux/textures) + metadata
+(meshes, triangles, matériaux, animations, rig OUI/NON, bbox, capacités). **Images
+PNG/JPG/JPEG/WebP** : aperçu simultané + nom/URI/format/dimensions — **pas de Three.js**
+pour une image. Mélange GLB + images autorisé ; type non supporté ou fichier invalide =
+erreur **locale** sur cette carte (les autres candidats restent opérationnels).
+
+Chaque carte : **INSPECT** (→ viewer mono-asset existant `?asset=<URI>`) et **CHOOSE**.
+CHOOSE n'enregistre **que** la sélection humaine dans l'URL (`&selected=<URI>` — une URL
+partagée conserve le choix ; stateless, sans backend) : il ne déplace/modifie AUCUN
+fichier ni GLB, n'écrit aucune metadata, n'appelle aucun backend — l'agent reste
+responsable de ce qu'il fait du choix ensuite. Le candidat sélectionné est visuellement
+évident (surbrillance + badge).
 
 ### `window.GameLoomViewer` — API JSON pour agent/debug
 
 Tout retour est sérialisable en JSON (aucun objet Three.js exposé) ; les méthodes sont sûres
-sans asset chargé (retour `{ ok: false, error }` ou `{ loaded: false }` — jamais d'exception) :
+sans asset chargé (retour `{ ok: false, error }` ou `{ loaded: false }` — jamais d'exception).
+L'API **`mode()`** dit quel contrat est actif ; les méthodes d'un mode ne sont pas exposées
+dans l'autre :
 
 | Méthode | Rôle |
 |---|---|
-| `info()` | stats complètes : `uri, loaded, scenes, meshes, vertices, triangles, materials, textures, animations[{name,duration}], skinnedMeshes, bones, rigDetected, bbox{min,max,size}, metadata (ou null)` |
-| `asset()` | `{ uri, loaded, error }` |
-| `animations()` | `[{ name, duration, selected, playing, time }]` |
-| `playAnimation(name?)` / `pauseAnimation()` / `stopAnimation()` | lecture (nom absent = animation courante/première) |
-| `setAnimationTime(s)` / `setAnimationSpeed(v)` | timeline / vitesse |
-| `setMeshVisible(b)` / `setMaterialsVisible(b)` / `setWireframe(b)` / `setColliderVisible(b)` / `setBoundingBoxVisible(b)` / `setSkeletonVisible(b)` / `setGridVisible(b)` / `setAxesVisible(b)` | toggles (retour `{ ok, …état }`) |
-| `getState()` | état complet des toggles + animation (JSON) |
+| `mode()` | `{ mode: "single" \| "choice" }` |
+| `info()` | (single) stats complètes : `uri, loaded, scenes, meshes, vertices, triangles, materials, textures, animations[{name,duration}], skinnedMeshes, bones, rigDetected, bbox{min,max,size}, metadata (ou null)` |
+| `asset()` | (single) `{ uri, loaded, error }` |
+| `animations()` | (single) `[{ name, duration, selected, playing, time }]` |
+| `playAnimation(name?)` / `pauseAnimation()` / `stopAnimation()` | (single) lecture (nom absent = animation courante/première) |
+| `setAnimationTime(s)` / `setAnimationSpeed(v)` | (single) timeline / vitesse |
+| `setMeshVisible(b)` / `setMaterialsVisible(b)` / `setWireframe(b)` / `setColliderVisible(b)` / `setBoundingBoxVisible(b)` / `setSkeletonVisible(b)` / `setGridVisible(b)` / `setAxesVisible(b)` | (single) toggles (retour `{ ok, …état }`) |
+| `getState()` | (single) état complet des toggles + animation (JSON) |
+| `choices()` | (choice) `[{ uri, kind, name, loaded, error, … }]` — par candidat : GLB → `info` (stats ci-dessus) ; image → `format`, `width`, `height` |
+| `getChoice()` | (choice) `{ selected }` — URI du choix humain, `null` avant tout choix |
+| `selectChoice(uri)` | (choice) enregistre la sélection → `{ ok: true, selected }` + `&selected=<URI>` dans l'URL ; URI inconnue → `{ ok: false, error }` (aucune mutation de projet) |
 
-**Frontière** : inspection uniquement — l'édition reste le CLI `glb` + Blender (collider,
-physics, components) ; le viewer ne modifie jamais un GLB. **Testé par `npm run test:viewer`**
+**Frontière** : inspection + choix uniquement — l'édition reste le CLI `glb` + Blender
+(collider, physics, components) ; le viewer ne modifie jamais un GLB ni le projet (Choice
+Mode = affichage + mémorisation locale du choix dans l'URL). **Testé par `npm run test:viewer`**
 (harness autonome, cycle de vie complet, ports 4180/9225 — volontairement **hors** de la
 suite officielle des 8 harnesses jeux, §15).
 

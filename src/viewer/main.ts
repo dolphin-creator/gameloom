@@ -1,8 +1,16 @@
-// GameLoom Asset Viewer v0.1 — outil d'inspection GLB (hors runtime).
-// Charge un GLB par URI (?asset=/assets/foo.glb), lit l'extension com.gameloom.v0
-// du chunk JSON (comme le core, mais sans le core), dessine les overlays
-// (collider/skeleton/bbox — géométries Three.js, PAS Rapier), lit les clips GLTF
-// via AnimationMixer, expose window.GameLoomViewer (JSON uniquement).
+// GameLoom Asset Viewer v0.2 — outil d'inspection GLB (hors runtime) + HUMAN CHOICE.
+//
+// Deux modes sur la même page viewer.html :
+//   • mono-asset (contrat inchangé) : ?asset=/assets/foo.glb
+//   • HUMAN CHOICE : ?choice=/assets/a.glb,/assets/b.glb,/assets/c.glb
+//     (GLB et/ou images PNG/JPG/JPEG/WebP ; sélection mémorisée dans &selected=<URI>)
+//
+// Le Choice Mode n'affiche que des candidats et n'enregistre qu'une sélection dans
+// l'URL : il ne déplace/modifie AUCUN fichier ni GLB, n'écrit aucune metadata,
+// n'appelle aucun backend. L'agent reste responsable de ce qu'il fait du choix ensuite.
+// Le viewer lit le GLB + l'extension com.gameloom.v0 par lui-même (comme le core,
+// mais sans le core), dessine les overlays (collider/bbox — géométries Three.js,
+// PAS Rapier), expose window.GameLoomViewer (JSON uniquement).
 // Seuls imports: three. Aucun couplage core/gameplay/infrastructure réseau.
 
 import * as THREE from 'three';
@@ -13,11 +21,15 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 const NS = 'com.gameloom.v0';
 const NEUTRAL = new THREE.MeshBasicMaterial({ color: 0x94a3b8 });
 
+// ---------- mode (décidé à l'URL — stateless) ----------
+const bootParams = new URLSearchParams(location.search);
+const MODE: 'single' | 'choice' = bootParams.get('choice') ? 'choice' : 'single';
+
+type R = Record<string, unknown>;
 type AnimItem = { name: string; duration: number };
 type BBox = { min: number[]; max: number[]; size: number[] };
-type ViewerInfo = {
+type GlbInfo = {
   uri: string;
-  loaded: boolean;
   scenes: number;
   meshes: number;
   vertices: number;
@@ -31,6 +43,112 @@ type ViewerInfo = {
   bbox: BBox | null;
   metadata: Record<string, unknown> | null;
 };
+
+// ---------- lecture GLB (JSON du chunk 0 — même convention que le core) ----------
+function readGlbJson(buffer: ArrayBuffer): any | null {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length < 12) return null;
+  const dv = new DataView(buffer);
+  if (dv.getUint32(0, true) !== 0x46546c67) return null; // "glTF"
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const len = dv.getUint32(offset, true);
+    const type = dv.getUint32(offset + 4, true);
+    if (type === 0x4e4f534a) { // JSON
+      try {
+        return JSON.parse(new TextDecoder().decode(bytes.subarray(offset + 8, offset + 8 + len)));
+      } catch {
+        return null;
+      }
+    }
+    offset += 8 + len;
+    if (len <= 0) break;
+  }
+  return null;
+}
+
+function readGlbMeta(buffer: ArrayBuffer): Record<string, unknown> | null {
+  const json = readGlbJson(buffer);
+  const ext = json?.scenes?.[0]?.extensions?.[NS];
+  return (ext && typeof ext === 'object') ? (ext as Record<string, unknown>) : null;
+}
+
+// ---------- utilitaires UI (partagés mono-asset / choice) ----------
+function kvRow(k: string, v: string): string {
+  return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ---------- overlay collider (visuel — géométries Three.js, pas de Rapier) ----------
+function buildColliderOverlay(type: string, size: number[], center: number[]): THREE.Group {
+  const g = new THREE.Group();
+  const fill = new THREE.MeshBasicMaterial({ color: 0x4fd1ff, transparent: true, opacity: 0.28, depthWrite: false });
+  const edge = new THREE.LineBasicMaterial({ color: 0x9fe8ff });
+  let mesh: THREE.Mesh | null = null;
+  if (type === 'box') {
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0] ?? 1, size[1] ?? 1, size[2] ?? 1), fill);
+    mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry as THREE.BufferGeometry), edge));
+  } else if (type === 'sphere') {
+    mesh = new THREE.Mesh(new THREE.SphereGeometry(size[0] ?? 0.5, 32, 20), fill);
+  } else if (type === 'capsule') {
+    mesh = new THREE.Mesh(new THREE.CapsuleGeometry(size[0] ?? 0.5, (size[1] ?? 0.5) * 2, 8, 24), fill);
+  }
+  if (mesh) {
+    mesh.position.set(center[0] ?? 0, center[1] ?? 0, center[2] ?? 0);
+    g.add(mesh);
+  }
+  return g;
+}
+
+// ---------- infos GLB (partagé mono-asset / choice) ----------
+function computeGlbInfo(uri: string, gltf: GLTF, box: THREE.Box3, metadata: Record<string, unknown> | null): GlbInfo {
+  let meshes = 0, vertices = 0, triangles = 0, skinnedMeshes = 0;
+  const mats = new Set<THREE.Material>();
+  const texs = new Set<THREE.Texture>();
+  const skinned: THREE.SkinnedMesh[] = [];
+  gltf.scene.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh) {
+      meshes++;
+      const g = m.geometry as THREE.BufferGeometry;
+      const pos = g.getAttribute('position');
+      vertices += pos ? pos.count : 0;
+      triangles += g.index ? g.index.count / 3 : (pos ? pos.count / 3 : 0);
+      for (const mat of (Array.isArray(m.material) ? m.material : [m.material])) {
+        if (!mat) continue;
+        mats.add(mat);
+        for (const v of Object.values(mat)) if (v instanceof THREE.Texture) texs.add(v);
+      }
+    }
+    if ((o as THREE.SkinnedMesh).isSkinnedMesh) { skinned.push(o as THREE.SkinnedMesh); skinnedMeshes++; }
+  });
+  const skeletons = new Set<THREE.Skeleton>();
+  let bones = 0;
+  for (const sm of skinned) if (!skeletons.has(sm.skeleton)) { skeletons.add(sm.skeleton); bones += sm.skeleton.bones.length; }
+  const min = box.min.toArray().map((n) => +n.toFixed(4));
+  const max = box.max.toArray().map((n) => +n.toFixed(4));
+  return {
+    uri,
+    scenes: gltf.scenes.length,
+    meshes,
+    vertices,
+    triangles: Math.round(triangles),
+    materials: mats.size,
+    textures: texs.size,
+    animations: gltf.animations.map((c) => ({ name: c.name || '(sans nom)', duration: +c.duration.toFixed(3) })),
+    skinnedMeshes,
+    bones,
+    rigDetected: skinnedMeshes > 0,
+    bbox: { min, max, size: max.map((n, i) => +(n - min[i]).toFixed(4)) },
+    metadata,
+  };
+}
+
+if (MODE === 'single') {
+type ViewerInfo = GlbInfo & { loaded: boolean };
 
 // ---------- état ----------
 const S = {
@@ -62,35 +180,6 @@ let skeletonGroup: THREE.Group | null = null;
 let mixer: THREE.AnimationMixer | null = null;
 let currentAction: THREE.AnimationAction | null = null;
 let clips: THREE.AnimationClip[] = [];
-
-// ---------- lecture GLB (JSON du chunk 0 — même convention que le core) ----------
-function readGlbJson(buffer: ArrayBuffer): any | null {
-  const bytes = new Uint8Array(buffer);
-  if (bytes.length < 12) return null;
-  const dv = new DataView(buffer);
-  if (dv.getUint32(0, true) !== 0x46546c67) return null; // "glTF"
-  let offset = 12;
-  while (offset + 8 <= bytes.length) {
-    const len = dv.getUint32(offset, true);
-    const type = dv.getUint32(offset + 4, true);
-    if (type === 0x4e4f534a) { // JSON
-      try {
-        return JSON.parse(new TextDecoder().decode(bytes.subarray(offset + 8, offset + 8 + len)));
-      } catch {
-        return null;
-      }
-    }
-    offset += 8 + len;
-    if (len <= 0) break;
-  }
-  return null;
-}
-
-function readGlbMeta(buffer: ArrayBuffer): Record<string, unknown> | null {
-  const json = readGlbJson(buffer);
-  const ext = json?.scenes?.[0]?.extensions?.[NS];
-  return (ext && typeof ext === 'object') ? (ext as Record<string, unknown>) : null;
-}
 
 // ---------- scène ----------
 const viewport = document.getElementById('viewport') as HTMLElement;
@@ -144,14 +233,8 @@ function setStatus(msg: string, kind: '' | 'ok' | 'err' = '') {
   statusEl.className = kind;
 }
 
-function kvRow(k: string, v: string): string {
-  return `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
-}
-
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
 const chk = (id: string) => (document.getElementById(id) as HTMLInputElement);
-
-// ---------- chargement ----------
 function clearAsset() {
   for (const g of [root, bboxHelper, colliderGroup, skeletonGroup]) {
     if (g) {
@@ -251,47 +334,7 @@ async function loadAsset(uri: string) {
 }
 
 function computeInfo(uri: string, gltf: GLTF, box: THREE.Box3): ViewerInfo {
-  let meshes = 0, vertices = 0, triangles = 0, skinnedMeshes = 0;
-  const mats = new Set<THREE.Material>();
-  const texs = new Set<THREE.Texture>();
-  const skinned: THREE.SkinnedMesh[] = [];
-  gltf.scene.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (m.isMesh) {
-      meshes++;
-      const g = m.geometry as THREE.BufferGeometry;
-      const pos = g.getAttribute('position');
-      vertices += pos ? pos.count : 0;
-      triangles += g.index ? g.index.count / 3 : (pos ? pos.count / 3 : 0);
-      for (const mat of (Array.isArray(m.material) ? m.material : [m.material])) {
-        if (!mat) continue;
-        mats.add(mat);
-        for (const v of Object.values(mat)) if (v instanceof THREE.Texture) texs.add(v);
-      }
-    }
-    if ((o as THREE.SkinnedMesh).isSkinnedMesh) { skinned.push(o as THREE.SkinnedMesh); skinnedMeshes++; }
-  });
-  const skeletons = new Set<THREE.Skeleton>();
-  let bones = 0;
-  for (const sm of skinned) if (!skeletons.has(sm.skeleton)) { skeletons.add(sm.skeleton); bones += sm.skeleton.bones.length; }
-  const min = box.min.toArray().map((n) => +n.toFixed(4));
-  const max = box.max.toArray().map((n) => +n.toFixed(4));
-  return {
-    uri,
-    loaded: true,
-    scenes: gltf.scenes.length,
-    meshes,
-    vertices,
-    triangles: Math.round(triangles),
-    materials: mats.size,
-    textures: texs.size,
-    animations: gltf.animations.map((c) => ({ name: c.name || '(sans nom)', duration: +c.duration.toFixed(3) })),
-    skinnedMeshes,
-    bones,
-    rigDetected: skinnedMeshes > 0,
-    bbox: { min, max, size: max.map((n, i) => +(n - min[i]).toFixed(4)) },
-    metadata: S.metadata,
-  };
+  return { ...computeGlbInfo(uri, gltf, box, S.metadata), loaded: true };
 }
 
 // ---------- auto-framing ----------
@@ -306,27 +349,6 @@ function autoFrame(obj: THREE.Object3D, box: THREE.Box3) {
   camera.position.copy(center).addScaledVector(dirv, dist);
   controls.target.copy(center);
   controls.update();
-}
-
-// ---------- overlay collider (visuel — géométries Three.js, pas de Rapier) ----------
-function buildColliderOverlay(type: string, size: number[], center: number[]): THREE.Group {
-  const g = new THREE.Group();
-  const fill = new THREE.MeshBasicMaterial({ color: 0x4fd1ff, transparent: true, opacity: 0.28, depthWrite: false });
-  const edge = new THREE.LineBasicMaterial({ color: 0x9fe8ff });
-  let mesh: THREE.Mesh | null = null;
-  if (type === 'box') {
-    mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0] ?? 1, size[1] ?? 1, size[2] ?? 1), fill);
-    mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry as THREE.BufferGeometry), edge));
-  } else if (type === 'sphere') {
-    mesh = new THREE.Mesh(new THREE.SphereGeometry(size[0] ?? 0.5, 32, 20), fill);
-  } else if (type === 'capsule') {
-    mesh = new THREE.Mesh(new THREE.CapsuleGeometry(size[0] ?? 0.5, (size[1] ?? 0.5) * 2, 8, 24), fill);
-  }
-  if (mesh) {
-    mesh.position.set(center[0] ?? 0, center[1] ?? 0, center[2] ?? 0);
-    g.add(mesh);
-  }
-  return g;
 }
 
 // ---------- toggles visuels ----------
@@ -378,7 +400,6 @@ function syncCheckboxes() {
   chk('chk-axes').checked = S.axesVisible;
   chk('chk-skeleton').checked = S.skeletonVisible;
 }
-
 // ---------- animations ----------
 function onAnimFinished(e: { action: THREE.AnimationAction }) {
   if (!S.loop && e.action === currentAction) {
@@ -590,12 +611,13 @@ function renderAnimPanel() {
   });
   updateAnimButtons();
 }
-
 // ---------- API publique (JSON uniquement — aucun objet Three.js exposé) ----------
-type R = Record<string, unknown>;
-
 const api = {
-  version: '0.1.0',
+  version: '0.2.0',
+
+  mode(): R {
+    return { mode: 'single' };
+  },
 
   info(): R {
     if (!S.loaded || !S.info) return { loaded: false, uri: S.assetUri || null, error: S.error || null };
@@ -659,7 +681,7 @@ const api = {
     if (currentAction) currentAction.setEffectiveTimeScale(S.speed);
     const lab = $('anim-speed-label') as HTMLElement | null;
     if (lab) lab.textContent = `${S.speed.toFixed(1)}×`;
-    const input = $('anim-speed') as HTMLInputElement | null;
+    const input = $('anim-time') as HTMLInputElement | null;
     if (input) input.value = String(S.speed);
     syncUrl();
     return { ok: true, speed: S.speed };
@@ -711,3 +733,310 @@ renderPanels();
 const initial = urlParam('asset');
 if (initial) void loadAsset(initial);
 else setStatus('Aucun asset — ouvrir ?asset=/assets/mon_asset.glb');
+} else {
+// ---------- HUMAN CHOICE MODE ----------
+// Plusieurs candidats sur UNE SEULE PAGE. Chaque GLB = viewport Three.js indépendant
+// (renderer/scène/caméra/OrbitControls propres, auto-frame). Images = <img> simple.
+// CHOOSE = mémorise le choix humain dans &selected=<URI> (aucune mutation de projet).
+// INSPECT = passe au viewer mono-asset existant (?asset=<URI>).
+
+const choiceList: string[] = (bootParams.get('choice') ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0);
+
+const IMG_EXT: Record<string, string> = { '.png': 'PNG', '.jpg': 'JPEG', '.jpeg': 'JPEG', '.webp': 'WebP' };
+
+function kindOf(uri: string): 'glb' | 'image' | 'unknown' {
+  const lower = uri.toLowerCase();
+  if (lower.endsWith('.glb')) return 'glb';
+  for (const e of Object.keys(IMG_EXT)) if (lower.endsWith(e)) return 'image';
+  return 'unknown';
+}
+
+function nameOf(uri: string): string {
+  const clean = uri.split(/[?#]/)[0];
+  return clean.split('/').pop() || uri;
+}
+
+type Cand = {
+  uri: string;
+  kind: 'glb' | 'image' | 'unknown';
+  name: string;
+  loaded: boolean;
+  error: string;
+  // GLB
+  renderer?: THREE.WebGLRenderer;
+  scene?: THREE.Scene;
+  camera?: THREE.PerspectiveCamera;
+  controls?: OrbitControls;
+  mixer?: THREE.AnimationMixer;
+  root?: THREE.Group;
+  info?: GlbInfo | null;
+  // image
+  width?: number;
+  height?: number;
+  format?: string;
+};
+
+const cands: Cand[] = choiceList.map((uri) => ({
+  uri, kind: kindOf(uri), name: nameOf(uri), loaded: false, error: '',
+}));
+
+let selected: string | null = bootParams.get('selected');
+if (selected && !cands.some((c) => c.uri === selected)) selected = null;
+
+const glbCands = cands.filter((c) => c.kind === 'glb');
+
+// ---------- DOM ----------
+const app = document.getElementById('app') as HTMLElement;
+app.innerHTML = '';
+app.classList.add('choice-app');
+
+const header = document.createElement('div');
+header.className = 'choice-header';
+header.innerHTML = `
+  <h1>GAMELOOM HUMAN CHOICE</h1>
+  <span class="muted">${cands.length} candidat(s) — choisissez-en un · le viewer ne modifie jamais le projet</span>
+`;
+app.appendChild(header);
+
+const gridEl = document.createElement('div');
+gridEl.className = 'choice-grid';
+app.appendChild(gridEl);
+
+const cards: (HTMLElement | null)[] = cands.map(() => null);
+
+function applySelectedVisual() {
+  cands.forEach((c, i) => {
+    const card = cards[i];
+    if (!card) return;
+    const on = c.uri === selected;
+    card.classList.toggle('selected', on);
+    const badge = card.querySelector('.sel-badge') as HTMLElement | null;
+    if (badge) badge.style.display = on ? '' : 'none';
+    const choose = card.querySelector('.btn-choose') as HTMLButtonElement | null;
+    if (choose) choose.classList.toggle('on', on);
+  });
+}
+
+function syncChoiceUrl() {
+  const p = new URLSearchParams();
+  p.set('choice', choiceList.join(','));
+  if (selected) p.set('selected', selected);
+  history.replaceState(null, '', '?' + p.toString());
+}
+
+function selectChoice(uri: string): R {
+  const cand = cands.find((c) => c.uri === uri);
+  if (!cand) return { ok: false, error: 'candidat inconnu: ' + uri };
+  selected = uri;
+  applySelectedVisual();
+  syncChoiceUrl();
+  return { ok: true, selected: uri };
+}
+function renderCardError(c: Cand, metaEl: HTMLElement) {
+  metaEl.innerHTML = `<span class="err">Erreur: ${escapeHtml(c.error)}</span>`;
+}
+
+function renderImageMeta(c: Cand, metaEl: HTMLElement) {
+  metaEl.innerHTML = [
+    kvRow('format', c.format ?? '—'),
+    kvRow('dimensions', c.width != null && c.height != null ? `${c.width} × ${c.height} px` : '—'),
+  ].join('');
+}
+
+function autoFrameCand(c: Cand, box: THREE.Box3) {
+  if (!c.camera || !c.controls || box.isEmpty()) return;
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const fov = THREE.MathUtils.degToRad(c.camera.fov);
+  const dist = (maxDim / (2 * Math.tan(fov / 2))) * 2.2;
+  const dirv = new THREE.Vector3(1, 0.55, 1).normalize();
+  c.camera.position.copy(center).addScaledVector(dirv, dist);
+  c.controls.target.copy(center);
+  c.controls.update();
+}
+
+function renderGlbMeta(c: Cand, metaEl: HTMLElement) {
+  const i = c.info;
+  if (!i) { renderCardError(c, metaEl); return; }
+  const lines = [
+    kvRow('meshes', String(i.meshes)),
+    kvRow('triangles', String(i.triangles)),
+    kvRow('matériaux', String(i.materials)),
+    kvRow('animations', String(i.animations.length)),
+    kvRow('rig détecté', i.rigDetected ? 'OUI' : 'NON'),
+    kvRow('bbox', i.bbox ? `[${i.bbox.size.map((n) => n.toFixed(2)).join(' × ')}] m` : '—'),
+  ];
+  if (i.metadata) {
+    const comp = i.metadata['components'] as Record<string, unknown> | undefined;
+    lines.push(kvRow('capacités', comp && Object.keys(comp).length ? Object.keys(comp).join(', ') : '—'));
+    const phys = i.metadata['physics'] as { body?: string; mass?: number } | undefined;
+    if (phys?.body) lines.push(kvRow('physics', `${phys.body}${phys.mass != null ? ' · ' + phys.mass + ' kg' : ''}`));
+  } else {
+    lines.push(kvRow('metadata GL', 'absente'));
+  }
+  metaEl.innerHTML = lines.join('');
+}
+
+async function loadGlbCandidate(c: Cand, vp: HTMLElement, metaEl: HTMLElement) {
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  vp.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0b0e13);
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 500);
+  camera.position.set(3, 2, 3);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x39445a, 1.5));
+  const dl = new THREE.DirectionalLight(0xffffff, 1.8);
+  dl.position.set(4, 8, 6);
+  scene.add(dl);
+  scene.add(new THREE.GridHelper(20, 40, 0x2c3a52, 0x1b2434));
+
+  c.renderer = renderer; c.scene = scene; c.camera = camera; c.controls = controls;
+  resizeCand(c);
+
+  try {
+    const res = await fetch(c.uri);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = await res.arrayBuffer();
+    const metadata = readGlbMeta(buf);
+    const gltf = await new GLTFLoader().parseAsync(buf, '');
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const rootg = new THREE.Group();
+    rootg.add(gltf.scene);
+    scene.add(rootg);
+    c.root = rootg;
+    c.info = computeGlbInfo(c.uri, gltf, box, metadata);
+    if (gltf.animations.length) {
+      c.mixer = new THREE.AnimationMixer(rootg);
+      c.mixer.clipAction(gltf.animations[0]).play();
+    }
+    autoFrameCand(c, box);
+    resizeCand(c);
+    c.loaded = true;
+    renderGlbMeta(c, metaEl);
+  } catch (e) {
+    c.error = e instanceof Error ? e.message : String(e);
+    c.loaded = false;
+    renderCardError(c, metaEl);
+  }
+}
+
+function resizeCand(c: Cand) {
+  if (!c.renderer || !c.camera) return;
+  const vp = c.renderer.domElement.parentElement;
+  const w = vp ? vp.clientWidth : 0, h = vp ? vp.clientHeight : 0;
+  if (!w || !h) return;
+  c.renderer.setSize(w, h);
+  c.camera.aspect = w / h;
+  c.camera.updateProjectionMatrix();
+}
+
+function makeCard(c: Cand, idx: number): HTMLElement {
+  const card = document.createElement('section');
+  card.className = 'card';
+  const kindLabel = c.kind === 'glb' ? 'GLB' : c.kind === 'image' ? 'image' : 'type inconnu';
+  card.innerHTML = `
+    <div class="card-head">
+      <div class="card-title"><span class="sel-badge">CHOISI</span><strong>${escapeHtml(c.name)}</strong></div>
+      <div class="card-uri muted">${escapeHtml(c.uri)}</div>
+      <div class="card-kind muted">${kindLabel}</div>
+    </div>
+    <div class="card-body"></div>
+    <div class="card-meta"><span class="muted">chargement…</span></div>
+    <div class="card-actions">
+      <button class="btn-inspect">INSPECT</button>
+      <button class="btn-choose">CHOOSE</button>
+    </div>
+  `;
+  const body = card.querySelector('.card-body') as HTMLElement;
+  const metaEl = card.querySelector('.card-meta') as HTMLElement;
+  (card.querySelector('.btn-inspect') as HTMLButtonElement).addEventListener('click', () => {
+    // viewer mono-asset existant — même contrat ?asset=<URI>
+    const p = new URLSearchParams();
+    p.set('asset', c.uri);
+    location.href = 'viewer.html?' + p.toString();
+  });
+  (card.querySelector('.btn-choose') as HTMLButtonElement).addEventListener('click', () => { selectChoice(c.uri); });
+
+  if (c.kind === 'image') {
+    const img = document.createElement('img');
+    img.className = 'card-img';
+    img.alt = c.name;
+    body.appendChild(img);
+    img.onload = () => {
+      c.width = img.naturalWidth; c.height = img.naturalHeight; c.loaded = true;
+      const ext = c.uri.toLowerCase().split('.').pop() ?? '';
+      c.format = IMG_EXT['.' + ext] ?? (ext.toUpperCase() || 'image');
+      renderImageMeta(c, metaEl);
+    };
+    img.onerror = () => { c.error = `erreur chargement image — ${c.uri}`; c.loaded = false; renderCardError(c, metaEl); };
+    img.src = c.uri;
+  } else if (c.kind === 'glb') {
+    const vp = document.createElement('div');
+    vp.className = 'card-vp';
+    body.appendChild(vp);
+    void loadGlbCandidate(c, vp, metaEl);
+  } else {
+    c.error = 'type non supporté (GLB ou PNG/JPG/JPEG/WebP)';
+    renderCardError(c, metaEl);
+  }
+
+  cards[idx] = card;
+  gridEl.appendChild(card);
+  return card;
+}
+
+// ---------- boucle de rendu (une rAF, tous les viewports GLB) ----------
+const clock = new THREE.Clock();
+function tick() {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  for (const c of glbCands) {
+    if (c.mixer) c.mixer.update(dt);
+    if (c.controls) c.controls.update();
+    if (c.renderer && c.scene && c.camera) c.renderer.render(c.scene, c.camera);
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+window.addEventListener('resize', () => { for (const c of glbCands) resizeCand(c); });
+
+// ---------- construction des cartes + sélection initiale ----------
+cands.forEach((c, i) => makeCard(c, i));
+applySelectedVisual();
+// taille initiale des viewports UNE fois les cartes dans le DOM (layout validé)
+requestAnimationFrame(() => { for (const c of glbCands) resizeCand(c); });
+
+// ---------- API publique (JSON — aucun objet Three.js exposé) ----------
+const api = {
+  version: '0.2.0',
+
+  mode(): R { return { mode: 'choice' }; },
+
+  choices(): R[] {
+    return cands.map((c) => {
+      const base: R = { uri: c.uri, kind: c.kind, name: c.name, loaded: c.loaded, error: c.error || null };
+      if (c.kind === 'image') {
+        base.format = c.format ?? null;
+        base.width = c.width ?? null;
+        base.height = c.height ?? null;
+      } else if (c.kind === 'glb' && c.info) {
+        base.info = c.info;
+      }
+      return base;
+    });
+  },
+
+  getChoice(): R { return { selected: selected }; },
+
+  selectChoice(uri: string): R { return selectChoice(uri); },
+};
+
+(window as unknown as { GameLoomViewer: typeof api }).GameLoomViewer = api;
+}

@@ -9,6 +9,7 @@ import { spawn, execSync } from 'node:child_process';
 import { openSync, cpSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import WebSocket from 'ws';
@@ -73,6 +74,27 @@ function spawnDetached(cmd, cmdArgs, logName) {
   return { p, dead: () => dead, logFile: join(tmp, logName) };
 }
 
+// ---------- PNG minimal (Node pur, zlib intégré) — fixtures images Choice Mode ----------
+const CRC_T = (() => { const t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = (buf) => { let c = 0xffffffff; for (const b of buf) c = CRC_T[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+  const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([len, body, crc]);
+}
+function makePng(w, h, rgb) {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; ihdr[9] = 2; // 8-bit truecolor RGB
+  const row = Buffer.alloc(1 + w * 3);
+  for (let x = 0; x < w; x++) { row[1 + x * 3] = rgb[0]; row[1 + x * 3 + 1] = rgb[1]; row[1 + x * 3 + 2] = rgb[2]; }
+  const raw = Buffer.concat(Array.from({ length: h }, () => row));
+  const idat = zlib.deflateSync(raw);
+  return Buffer.concat([sig, pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', Buffer.alloc(0))]);
+}
+
 const results = [];
 function check(name, cond, detail) {
   results.push({ name, pass: !!cond });
@@ -91,7 +113,14 @@ function teardown() {
   for (const s of started) { if (!s.dead()) killTree(s.p.pid); }
 }
 
-const TMP_GLBs = ['dist/assets/_viewer_tmp_sphere.glb', 'dist/assets/_viewer_tmp_capsule.glb'];
+  const TMP_GLBs = [
+    'dist/assets/_viewer_tmp_sphere.glb',
+    'dist/assets/_viewer_tmp_capsule.glb',
+    'dist/assets/_viewer_tmp_bad.glb',
+    'dist/assets/_viewer_tmp_img_a.png',
+    'dist/assets/_viewer_tmp_img_b.png',
+    'dist/assets/_viewer_tmp_img_c.png',
+  ];
 
 (async () => {
   for (const port of [PORT, CDP_PORT]) {
@@ -207,6 +236,16 @@ const TMP_GLBs = ['dist/assets/_viewer_tmp_sphere.glb', 'dist/assets/_viewer_tmp
     for (let i = 0; i < 40; i++) {
       await sleep(300);
       try { if (await cdp.eval('typeof window.GameLoomViewer === "object"')) return true; } catch { }
+    }
+    return false;
+  }
+  async function waitChoice(n) {
+    for (let i = 0; i < 80; i++) {
+      await sleep(300);
+      try {
+        const st = await cdp.eval(`typeof GameLoomViewer === 'object' && GameLoomViewer.mode().mode === 'choice' && GameLoomViewer.choices().length === ${n} && GameLoomViewer.choices().every(c => c.loaded || c.error)`);
+        if (st) return true;
+      } catch { }
     }
     return false;
   }
@@ -333,6 +372,87 @@ const TMP_GLBs = ['dist/assets/_viewer_tmp_sphere.glb', 'dist/assets/_viewer_tmp
   const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
   writeFileSync(join(REPO, 'tools', 'viewer_screenshot.png'), Buffer.from(shot.data, 'base64'));
   check('S9 screenshot capturé (validation visuelle)', true, 'tools/viewer_screenshot.png');
+
+  // ---------- S10: CHOICE GLB — 3 candidats simultanés sur UNE page ----------
+  await navigate(`${BASE}/viewer.html?choice=/assets/ammo_military.glb,/assets/ammo_scifi.glb,/assets/ammo_industrial.glb`);
+  const choiceReady = await waitChoice(3);
+  const mode10 = await cdp.eval('GameLoomViewer.mode().mode').catch(() => null);
+  check('S10 choice: mode=choice + 3 candidats chargés simultanément', choiceReady && mode10 === 'choice', { mode10 });
+  const nCards = await cdp.eval('document.querySelectorAll(".card").length');
+  const nCanvases = await cdp.eval('document.querySelectorAll(".card-vp canvas").length');
+  check('S10 choice: 3 cartes + 3 viewports canvas indépendants (1 page, 0 onglet)', nCards === 3 && nCanvases === 3, { nCards, nCanvases });
+  const ch10 = await cdp.eval('JSON.stringify(GameLoomViewer.choices())').then((j) => JSON.parse(j));
+  check('S10 choice: 3 URI correctes, toutes loaded=true', ch10.length === 3 && ch10.every((c) => c.loaded === true), ch10.map((c) => c.uri));
+  const tris = ch10.map((c) => c.info && c.info.triangles);
+  const bbs = ch10.map((c) => c.info && c.info.bbox && c.info.bbox.size);
+  check('S10 choice: metadata INDÉPENDANTES par candidat (triangles + bbox distincts)',
+    new Set(tris).size === 3 && new Set(bbs.map((b) => JSON.stringify(b))).size === 3, { tris, bbs });
+  const selA = await cdp.eval("GameLoomViewer.selectChoice('/assets/ammo_military.glb')");
+  const getA = await cdp.eval('JSON.stringify(GameLoomViewer.getChoice())');
+  const urlA = await cdp.eval('location.search');
+  check('S10 choice: choix A — selectChoice + getChoice() + état URL &selected=',
+    selA?.ok === true && JSON.parse(getA).selected === '/assets/ammo_military.glb' && /selected=%2Fassets%2Fammo_military\.glb/.test(urlA), { selA, urlA });
+  const selB = await cdp.eval("GameLoomViewer.selectChoice('/assets/ammo_scifi.glb')");
+  const getB = await cdp.eval('JSON.stringify(GameLoomViewer.getChoice())');
+  const visB = await cdp.eval('document.querySelectorAll(".card.selected .card-title strong").length');
+  check('S10 choice: changement A→B — getChoice() exact + 1 seule carte sélectionnée visuellement',
+    selB?.ok === true && JSON.parse(getB).selected === '/assets/ammo_scifi.glb' && visB === 1, { getB: JSON.parse(getB), visB });
+  const selBad = await cdp.eval("GameLoomViewer.selectChoice('/assets/inconnu.glb')");
+  check('S10 choice: URI inconnue refusée proprement ({ok:false, error}, sans exception)', selBad?.ok === false && typeof selBad?.error === 'string', selBad);
+  noErrorSegment('S10 choice GLB');
+
+  // ---------- S10b: INSPECT — bouton réel → viewer mono-asset existant ----------
+  await cdp.eval('document.querySelectorAll(".btn-inspect")[1].click()');
+  const api10b = await waitApi();
+  const loaded10b = await waitLoaded();
+  const mode10b = await cdp.eval('GameLoomViewer.mode().mode');
+  const asset10b = await cdp.eval('JSON.stringify(GameLoomViewer.asset())');
+  check('S10b INSPECT: bouton → viewer mono-asset ?asset= (mode single + asset correct chargé)',
+    api10b && loaded10b && mode10b === 'single' && JSON.parse(asset10b).uri === '/assets/ammo_scifi.glb', { mode10b, asset: asset10b });
+  noErrorSegment('S10b inspect');
+
+  // ---------- S10c: retour Choice Mode — URL partagée conserve la sélection ----------
+  await navigate(`${BASE}/viewer.html?choice=/assets/ammo_military.glb,/assets/ammo_scifi.glb,/assets/ammo_industrial.glb&selected=/assets/ammo_scifi.glb`);
+  const choiceBack = await waitChoice(3);
+  const selBack = await cdp.eval('JSON.stringify(GameLoomViewer.getChoice())');
+  check('S10c retour choice: &selected= restauré au boot (sélection humaine préservée, stateless)',
+    choiceBack && JSON.parse(selBack).selected === '/assets/ammo_scifi.glb', selBack);
+  noErrorSegment('S10c retour choice');
+
+  // ---------- S11: CHOICE GLB — candidat invalide : erreur LOCALE, autres opérationnels ----------
+  writeFileSync(join(REPO, 'dist/assets/_viewer_tmp_bad.glb'), Buffer.from('CECI N EST PAS UN GLB'));
+  await navigate(`${BASE}/viewer.html?choice=/assets/ammo_military.glb,/assets/_viewer_tmp_bad.glb,/assets/ammo_scifi.glb`);
+  const choice11 = await waitChoice(3);
+  const ch11 = await cdp.eval('JSON.stringify(GameLoomViewer.choices())').then((j) => JSON.parse(j));
+  check('S11 GLB invalide: erreur locale sur SA carte seulement (loaded=false + error, sans crash global)',
+    choice11 && ch11[1].loaded === false && typeof ch11[1].error === 'string' && ch11[1].error.length > 0,
+    ch11[1] && { loaded: ch11[1].loaded, error: ch11[1].error });
+  check('S11 GLB invalide: les 2 autres candidats restent chargés et fonctionnels',
+    ch11[0].loaded === true && ch11[2].loaded === true, ch11.map((c) => ({ uri: c.uri, loaded: c.loaded })));
+  const sel11 = await cdp.eval("GameLoomViewer.selectChoice('/assets/ammo_scifi.glb')");
+  const get11 = await cdp.eval('JSON.stringify(GameLoomViewer.getChoice())');
+  check('S11 GLB invalide: sélection sur un candidat valide fonctionne quand même',
+    sel11?.ok === true && JSON.parse(get11).selected === '/assets/ammo_scifi.glb', get11);
+  noErrorSegment('S11 GLB invalide');
+
+  // ---------- S12: CHOICE IMAGE — 3 images (PNG générés Node pur), dimensions + sélection ----------
+  for (const [name, w, h, rgb] of [['img_a', 320, 200, [200, 40, 60]], ['img_b', 256, 128, [40, 90, 200]], ['img_c', 400, 150, [50, 160, 80]]]) {
+    writeFileSync(join(REPO, `dist/assets/_viewer_tmp_${name}.png`), makePng(w, h, rgb));
+  }
+  await navigate(`${BASE}/viewer.html?choice=/assets/_viewer_tmp_img_a.png,/assets/_viewer_tmp_img_b.png,/assets/_viewer_tmp_img_c.png`);
+  const choice12 = await waitChoice(3);
+  const ch12 = await cdp.eval('JSON.stringify(GameLoomViewer.choices())').then((j) => JSON.parse(j));
+  const dims = ch12.map((c) => `${c.width}x${c.height}:${c.format}`);
+  check('S12 choice images: 3 images chargées + dimensions exactes (320x200 / 256x128 / 400x150 PNG)',
+    choice12 && dims.join(',') === '320x200:PNG,256x128:PNG,400x150:PNG', dims);
+  const nCanvas12 = await cdp.eval('document.querySelectorAll(".card-vp canvas").length');
+  check('S12 choice images: PAS de viewport Three.js inutile pour des images (0 canvas)', nCanvas12 === 0, nCanvas12);
+  const sel12 = await cdp.eval("GameLoomViewer.selectChoice('/assets/_viewer_tmp_img_b.png')");
+  const get12 = await cdp.eval('JSON.stringify(GameLoomViewer.getChoice())');
+  const url12 = await cdp.eval('location.search');
+  check('S12 choice images: sélection + getChoice() + état URL &selected=',
+    sel12?.ok === true && JSON.parse(get12).selected === '/assets/_viewer_tmp_img_b.png' && /selected=/.test(url12), get12);
+  noErrorSegment('S12 choice images');
 
   // ---------- bilan + teardown ----------
   cdp.close();

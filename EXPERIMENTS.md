@@ -1127,3 +1127,24 @@ lisant que `GAMELOOM.md`) et le workflow itératif humain ↔ agent ↔ viewer (
 Les deux points sont désormais documentés dans `GAMELOOM.md` (§2 pipeline, §19 viewer).
 Aucune modification du core / viewer / jeux ; seuls les 2 GLB (1 nouveau, 1 régénéré) et
 `tools/make_glb.mjs` (recettes) ont changé.
+
+---
+
+## Choice Mode viewer — friction démontrée (2026-09-28)
+
+**Observation (expérience réelle)** : 3 GLB ammo correctement générés (military / scifi /
+industrial) → viewer mono-asset `?asset=` → l'agent présente les candidats en **remplaçant
+l'URL successivement** → **comparaison humaine impossible** (un seul objet à la fois ; la
+décision « lequel choisir ? » exige la vue simultanée). Friction expérimentalement
+démontrée, pas hypothétique.
+
+**Décision** : **Choice Mode** `?choice=a,b,c` **dans le viewer existant** (pas une
+nouvelle app, pas de backend, pas de core, zéro nouvelle dépendance) : N viewports Three.js
+indépendants sur UNE page + metadata par candidat + **INSPECT** (→ `?asset=`) + **CHOOSE**
+(écrit seulement `&selected=` dans l'URL — stateless, aucune mutation du projet). API JSON
+`mode()/choices()/getChoice()/selectChoice()`. GLB **et** images PNG/JPG/JPEG/WebP (images
+= `<img>`, pas de Three.js) ; le mélange est autorisé car trivialement simple (une carte =
+un viewport OU une image — aucun chemin de code commun non nécessaire). Candidat invalide
+= erreur locale sur sa carte. Validé sur les 3 GLB ammo (preuve navigateur : 1 page,
+3 viewports, orbit indépendant, sélection A→B, INSPECT, retour) + 3 images ; harness
+étendu S10–S12 (`test:viewer`, 67/67). Core / jeux / 3 ammo GLB inchangés.

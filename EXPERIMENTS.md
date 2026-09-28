@@ -396,14 +396,126 @@ marquage du gap. `GAMELOOM.md` §5 complété. Au-delà, un agent neuf peut cons
 
 ---
 
+## v0.2 — Promotion core `moveEntity` + zones (migration Game #5)
+
+**Objectif** : implémenter les deux candidates promues (seuil D002 atteint sur #5),
+migrer Game #5 sur les primitives core **sans changer le comportement** (fingerprint
+préservé), laisser Games #1–#4 **intacts**, et officialiser `tools/run_harnesses.mjs`
+comme mécanisme unique de bout en bout.
+
+**Ajouts core** (`src/core/types.ts` + `runtime.ts`, `version` → `0.2.0`) :
+
+| API | Forme | Comportement |
+|---|---|---|
+| `rt.entityPosition(id)` | `Vec3 \| null` | position Rapier via la `Map bodyById` interne (PAS de `bodyOf` publique, aucune fuite Rapier) |
+| `rt.moveEntity(id, target, speed, { face?, avoidObstacles? })` | `boolean` | déplacement XZ `speed × FIXED_DT`, clamp à la destination, Y conservé, orientation `face` (défaut `true`) ; refus `false` + `console.error` : player (KCC), static/dynamic, id inconnu |
+| `rt.faceEntity(id, target)` | `void` | orientation sans translation |
+| `rt.createZone({ id, bounds: { min: [x,z], max: [x,z] }, tags, onStay? })` | `ZoneHandle { id, isInside(eid), destroy() }` | zone AABB XZ **multi-entités**, état possédé par le core |
+| `GameLoom.zones()` (publique) | `{ id, x1, x2, z1, z2, inside: string[] }[]` | debug contractuel |
+| events `zone.enter` / `zone.exit` | `entity` = entité observée, `other` = id zone, `data = { zone, x, z }` | émis par le core sur arête |
+
+**Divergences de design candidate → implémenté** :
+- `moveEntity(id, target, maxStep, { face })` → **`speed` en m/s** (convention 5, cohérent
+  avec les jeux) + **`avoidObstacles`** (défaut `false`) = le verrou obstacle legacy #3–#5.
+- `zone(min, max, { entities, onEnter, onExit, tick? })` → `createZone` déclaratif +
+  **events core** `zone.enter`/`zone.exit` sur le bus (pas de callbacks par zone) +
+  **`onStay`** (pas `tick`) : le jeu s'abonne via `rt.on(tag, 'zone.enter', { if, do, fn })`
+  comme à tout autre event. `tags` = **UNION** des tags observés (résolution dynamique à
+  chaque tick, dédupliquée par id).
+
+**Décisions architecturales figées** (toutes prouvées par `test_v02`, M1–M13 + Z14–Z28) :
+1. **Pas de hard-stop supplémentaire** dans `moveEntity` : la **formule legacy du verrou
+   obstacle est conservée telle quelle** (port fidèle #3–#5) — raycast depuis 0,9 m devant
+   (hauteur +1,0), `limit = toi + 0.9 − 0.5` ; si le point de sonde est DANS l'obstacle
+   (toi ≈ 0), le step est plafonné à 0,4 m (l'entité **rampe dans** l'obstacle) — pas de
+   stop dur, pas de pathfinding. Observation M12b (100 m/s) : 1er point clampé à 4,0
+   (à 0,5 m de l'arête du mur) puis rampe 0,4 m/pas.
+2. Zones évaluées **après la passe `onTick` du jeu, avant `rt.tick++`** (positions
+   finales du tick).
+3. `onStay` **n'est pas appelé au tick d'enter** (Z17 : exactement 5 appels sur 5 ticks
+   inside).
+4. **Pas de `zone.exit` lors d'un destroy** entité ou zone — purge silencieuse (Z23, Z24).
+5. Le raycast obstacle **exclut le joueur ET le body propre** de l'entité (pas de
+   TOI = 0 sur soi — M13).
+6. `tags` = **UNION** (Z19) + déduplication entité multi-tags (Z20) ; **bornes
+   inclusives** (Z26) ; bornes inversées normalisées (Z25).
+7. `face: true` et `avoidObstacles: false` **par défaut** (M6–M11) ; clamp à la
+   destination puis `false` si déjà sur place (M4) ; Y conservé (M5) ; refus
+   statique/dynamique/player signalés par `console.error` (M9/M10).
+8. **Pas de `bodyOf` public** : `entityPosition` (position seule) — **aucune fuite Rapier
+   dans l'API gameplay** (le jeu ne touche plus de rigid body pour mouvement/zones).
+9. `createZone` avec id en double = `console.error` (non bloquant).
+10. Entité spawnée **après** `createZone` détectée (enter au 1er tick — Z22) ;
+    player observable par un tag (Z21).
+
+**Migration Game #5** (`src/game/outpost/main.ts`) :
+- `bodyOf`/`faceBody`/`chaseBody` → `rt.moveEntity` / `rt.faceEntity` /
+  `rt.entityPosition` (survivants FOLLOWING + offsets d'évacuation, ennemis CHASE,
+  verrou obstacle `avoidObstacles: true` conservé sur la poursuite).
+- `inZone`/`tickDangers` + `dangerPrev` par (zone, entité) → **3 × `createZone`**
+  (fire, gas, evac — `tags: ['player','survivor']`) + règles core `zone.enter`/
+  `zone.exit` (`rt.on('survivor', 'zone.enter', { if: c => c.other === 'fire', ... })`)
+  + `onStay` (dégâts périodiques feu).
+- Dernier bloc migré = le **hook `dbg.outpostState`** (références mortes `bodyOf`/
+  `inZone`/`dangerPrev`) — forme de l'objet **strictement préservée** (le harness en
+  dépend) : `dangers[].inside` = `['player', ...survivors].filter(isInside)` car l'ancien
+  `dangerPrev` suivait joueur + survivants ; `evac.playerInside`/`survivorInside` et
+  `dangers[].playerInside` via `isInside` des `ZoneHandle`.
+
+**Fingerprint avant/après** (test_outpost) : **IDENTIQUE, bit à bit** — le fingerprint
+figé du Game #5 v0.1 (cf. section ci-dessus) est reproduit à l'identique après migration :
+`e1KillTick:314 · e2KillTick:378 · fireEnterTick:394 · fireExitTick:471 ·
+gasEnterTick:394 · hpAfterFire:61 · aFollowedTick:495 · aEvacTick:1045 ·
+bFollowedTick:1107 · bEvacTick:1526 · cEvacTick:1249 · gapA16:2.16 · rescueTick:1526 ·
+extractedTick:1526 · diedTick:30 · final {won:true, evacCount:3, enemies:0, score:200}`.
+Migration = **zéro changement de comportement**.
+
+**Validation** :
+- `node tools/run_harnesses.mjs test_v02 --build` : **30/30** (M1–M13 mouvement,
+  Z14–Z28 zones).
+- Suite complète `node tools/run_harnesses.mjs --build` : **6/6 harnesses** — v02 30/30 ·
+  #1 19/19 · #2 14/14 · #3 21/21 · #4 34/34 · #5 32/32. Games #1–#4 : **fichiers intacts,
+  zéro régression**.
+- **5 runs consécutifs** `test_outpost` (`--repeat 5`) : fingerprint identique à chaque
+  run ; ports 4173/9224 libres, aucun processus Vite/Chrome CDP orphelin.
+
+**Observations expérimentales (v0.2)** :
+1. **Leak de console inter-harnesses (bug orchestrateur, découvert v0.2)** : les harness
+   choisissent le **1er target `page`** du Chrome partagé ; en réutilisant la page du
+   harness précédent (`v02_test`, qui émet volontairement les `console.error` de refus
+   `moveEntity`), les 3 erreurs ont fui dans le check console T8 de `test_headless`
+   (18/19 au 1er run de la suite). Fix : **1 target page frais par harness** (créer le
+   nouveau **avant** de fermer l'ancien — `--headless=new` quitte quand le dernier onglet
+   ferme). Leçon : l'unité d'isolation d'une assertion console est le **target page**,
+   pas l'URL.
+2. La **surface debug v0.2** (`v02_test.html` + `_debug.v02`) permet de tester les
+   primitives core **sans jeu** : 30 assertions en ~2 s, scènes triviales (1 mur, 1
+   entité).
+3. `GameLoom.zones()` (debug) + `ZoneHandle.isInside` couvrent l'observabilité test ET
+   logique de jeu sans exposer l'état interne (`Set` de `inside`).
+4. La convention **`speed × FIXED_DT`** (convention n°5) est reprise telle quelle par la
+   primitive core : `moveEntity` reçoit des m/s, jamais un step par appel.
+5. Le port du verrou obstacle legacy (décision 1) a rendu la migration transparente :
+   aucun ajustement de gameplay n'a été nécessaire pour que le fingerprint tienne.
+
+**Dette (v0.2)** : `onStay` n'est pas un event (API documentée) ; zones **XZ uniquement**
+(pas de dimension Y) ; `avoidObstacles` = verrou de step, **pas** d'évitement ; id de
+zone en double = avertissement, non bloquant.
+
+---
+
 ## Cross-game observations
 
 Synthèse des 5 slices :
 
-- **Core stable** : le core (7 fichiers, ~890 LOC) a été **créé sur le jeu #1 et n'a pas
-  été modifié pour les jeux #2, #3, #4 et #5** (CORE_ACCESS_REQUIRED = 0 sur #4 ; #5 =
-  **1 lecture post-DOC_GAP, 0 modification**). Tous les jeux n'utilisent que la surface
-  publique + `rt.world` / `rt.scene` / `rt.bus`.
+- **Core stable #1→#5, première extension en v0.2** : le core (7 fichiers, ~890 LOC) a
+  été **créé sur le jeu #1 et n'a pas été modifié pour les jeux #2, #3, #4 et #5**
+  (CORE_ACCESS_REQUIRED = 0 sur #4 ; #5 = **1 lecture post-DOC_GAP, 0 modification**).
+  **v0.2** a ensuite étendu le core **seulement** avec les 2 primitives promues par
+  D002 (`moveEntity`/`faceEntity`/`entityPosition` + zones/`createZone` +
+  `zone.enter`/`zone.exit` + `GameLoom.zones()`, `version` 0.2.0) — cf. § v0.2. Tous les
+  jeux n'utilisent que la surface publique (+ `rt.world`/`rt.scene`/`rt.bus` pour les
+  objets du monde).
 - **Déterminisme 100 % sur les 5 jeux** : timestep fixe + scènes contrôlées + pas de
   `Math.random` non seedé. Répartition des runs : #1 = 8 (Linux) + 3 (Windows) ;
   #2 = 3 (Windows) ; #3 = 5 (Windows) ; #4 = 5 (Windows) ; **#5 = 5 (Windows)** — tous
@@ -439,51 +551,34 @@ Synthèse des 5 slices :
 
 ---
 
-## Candidate abstractions
+## Candidate abstractions → promotions v0.2
 
-> **Ces primitives N'EXISTENT PAS dans le code.** Elles sont des **candidates** issues de
-> mesures. Tant qu'elles ne sont pas implémentées + validées + documentées, elles ne
-> doivent **jamais** être présentées comme API GameLoom (`GAMELOOM.md` ne les mentionne
-> que pour dire qu'elles n'existent pas).
+> Les deux candidates v0.1 ont été **promues au core en v0.2** — preuves ci-dessous,
+> implémentation + validation + divergences de design : § v0.2. Aucune autre candidate
+> en cours. La règle D002 (règle des trois) s'est appliquée **à l'arrivée** : aucune
+> promotion n'a été faite avant le seuil, aucune n'a été retardée après.
 
-### `moveEntity(id, target, maxStep, { face })`
-- **Problème observé** : déplacer une entité kinematic sans traverser les murs ni le
-  joueur demande la recherche du body (`userData`), un quaternion manuel, un raycast
-  verrou avec la sémantique « exclut le joueur » et un `setTranslation` clampé.
-- **Jeux concernés** : #3 (1 entité mobile), #4 (2 entités mobiles + 1 projectile),
-  **#5 (5 entités mobiles : 3 survivants + 2 ennemis)** — **3 des 5 slices** (3e
-  reproduction, règle des trois atteinte).
-- **Duplication** : 35 LOC/jeu (#4) / **26 LOC/jeu (#5)** (`bodyOf`/`faceBody`/
-  `chaseBody` recopiées telles quelles des slices précédentes).
-- **Bénéfice attendu** : encapsuler la recherche du body, l'orientation, le verrou
-  raycast et le pas clampé ; la sémantique « exclure le joueur » et
-  « kinematic = obstacle KCC » devient du savoir du core. (Le core maintient déjà une
-  `Map bodyById` interne non exposée — une `bodyOf` core serait triviale.)
-- **Risques** : contrat de mouvement à designer (verrou, face, maxStep) ; l'API doit
-  rester déterministe (pas de `setLinearVelocity` implicite).
-- **Statut actuel** : **candidate, non implémentée — 3e reproduction atteinte (D002)**.
-  La promotion au core est **justifiée** ; décision à prendre (non faite sur #5 :
-  mesure de friction, core intact par politique de mission).
+### `moveEntity(id, target, speed, { face, avoidObstacles })` — PROMUE (v0.2)
+- **Preuve (3 reproductions — seuil D002 atteint sur #5)** : #3 (1 entité mobile),
+  #4 (2 mobiles + 1 projectile, 35 LOC/jeu), #5 (5 mobiles : 3 survivants + 2 ennemis,
+  26 LOC/jeu) — `bodyOf`/`faceBody`/`chaseBody` recopiées telles quelles, avec la fuite
+  de connaissance du core (`userData`, exclusion du joueur dans le raycast, quaternion
+  manuel).
+- **Promotion** : `rt.moveEntity` + `rt.faceEntity` + `rt.entityPosition` (le core
+  maintient déjà la `Map bodyById` — `bodyOf` core n'a jamais été exposée, `entityPosition`
+  seulement). Divergence validée : `maxStep` candidate → **`speed` en m/s** (convention 5).
 
-### `zone(min, max, { entities, onEnter, onExit, tick? })`
-- **Problème observé** : une zone spatiale (piège, sortie, activation) = test d'inclusion
-  AABB recopié + états d'arête (entrée/sortie) maintenus à la main + comportement
-  périodique. **#5 ajoute la dimension multi-entités** : une zone doit suivre
-  simultanément **joueur + 3 survivants** → l'état d'arête doit être **par (zone, entité)**
-  (`Map` `${zone}:${entity}`), pas un simple booléen par zone.
-- **Jeux concernés** : #2 (sortie), #3 (extraction), #4 (piège + sortie + activation =
-  5 zones au total), **#5 (feu + gaz + évacuation = 3 zones, dont 2 multi-entités)** —
-  **4 des 5 slices** (règle des trois dépassée).
-- **Duplication** : 31 LOC/jeu (#4) / **~46 LOC/jeu (#5**, helper `inZone` + état d'arête
-  par (zone, entité) + dégâts périodiques) ; le test AABB est écrit 3× sur #4.
-- **Bénéfice attendu** : fournir l'inclusion AABB + les arêtes enter/exit **par entité** ;
-  le comportement spécifique (dégâts périodiques, victoire à condition multiple) reste
-  côté jeu (frontière normale).
-- **Risques** : faibles (géométrie pure + arêtes) ; éviter de transformer l'API en
-  « trigger system » complet ; **le support multi-entités est maintenant requis** (preuve #5).
-- **Statut actuel** : **candidate, non implémentée — 4e occurrence + multi-entités (D002)**.
-  La promotion au core est **justifiée** et doit inclure le multi-entités ; décision à
-  prendre (non faite sur #5 : mesure de friction, core intact par politique de mission).
+### `zone(min, max, { entities, onEnter, onExit, tick? })` — PROMUE (v0.2) sous forme
+`createZone` + events `zone.enter`/`zone.exit` + `onStay`
+- **Preuve (4 occurrences — seuil D002 dépassé)** : #2 (sortie), #3 (extraction),
+  #4 (piège + sortie + activation = 5 zones, 31 LOC/jeu, AABB écrit 3×), #5 (feu + gaz +
+  évacuation = 3 zones, ~46 LOC/jeu, **première zone multi-entités** — état d'arête par
+  (zone, entité) manuelle).
+- **Promotion** : `rt.createZone` (AABB XZ multi-entités, `tags` = UNION, bornes
+  inclusives) + **events core** sur le bus (au lieu de callbacks par zone — la frontière
+  event→action est conservée) + `onStay` (au lieu de `tick`). Multi-entités inclus (preuve
+  #5). Le comportement spécifique (dégâts périodiques, victoire à condition multiple)
+  reste côté jeu, comme prévu par la candidate.
 
 ---
 
@@ -502,8 +597,9 @@ Synthèse des 5 slices :
   (le CLI `glb` a son propre re-encodeur GLB).
 
 **Outillage / workflow** :
-- Copie manuelle des GLB dans `dist/assets/` après build (Vite ne copie pas `assets/`) —
-  à automatiser éventuellement (plugin/étape de build).
+- Copie des GLB dans `dist/assets/` après build (Vite ne copie pas `assets/`) —
+  **automatisée par `run_harnesses.mjs --build`** ; un build manuel reste à copier
+  (`cp assets/*.glb dist/assets/`).
 - `npm run dev` (HMR) = double-boot GameLoom → tests uniquement sur le build production.
 - Les chemins dans les harness doivent rester **relatifs au repo** (un chemin absolu
   d'OS avait crashé le harness sous Windows malgré 18/19 checks passés).
@@ -595,45 +691,77 @@ Reason: un processus avec handles hérités bloque la boucle d'outils ; et, plus
 fondamentalement, sous OpenCode/Windows même un détachement correct peut bloquer la
 boucle → la seule approche fiable est que le tool call possède tout le cycle de vie.
 
+### D010 — Promotion `moveEntity`/`faceEntity`/`entityPosition` au core (v0.2)
+Status: en vigueur (v0.2).
+Evidence: 3 reproductions de la friction entité mobile (#3, #4, #5 — cf. § v0.2 et
+Candidate abstractions) ; seuil D002 atteint.
+Decision: primitives core déterministes (`speed × FIXED_DT`, clamp, refus non-kinematic
+et player) ; **pas de hard-stop supplémentaire** — la formule legacy du verrou obstacle
+(#3–#5) est portée telle quelle sous `avoidObstacles: false` par défaut ; **pas de
+`bodyOf` public** (position seule via `entityPosition`), aucune fuite Rapier dans l'API
+gameplay.
+Reason: friction mesurée sur 3 slices + fuite de connaissance du core encapsulée sans
+changer le comportement prouvé des jeux existants.
+
+### D011 — Promotion des zones au core (v0.2) : `createZone` + events `zone.enter`/`zone.exit`
+Status: en vigueur (v0.2).
+Evidence: 4 occurrences (#2–#5) dont la 1re zone **multi-entités** (#5) ; seuil D002
+dépassé.
+Decision: zones AABB XZ multi-entités, `tags` = **UNION**, bornes **inclusives**, état
+inside/outside **possédé par le core**, évalué **après `onTick` jeu, avant `tick++`** ;
+`zone.enter`/`zone.exit` = **events bus** (pas de callbacks par zone — conservation de la
+frontière event→action) ; `onStay` non appelé au tick d'enter ; **pas de `zone.exit`
+synthétique** sur destroy (purge silencieuse).
+Reason: la dimension multi-entités rend le booléen par zone insuffisant ; les events bus
+composent avec les règles déclaratives (`rt.on`) déjà validées sur les 5 jeux.
+
+### D012 — Orchestrateur `run_harnesses.mjs` = mécanisme officiel unique + 1 target page frais par harness
+Status: en vigueur (v0.2).
+Evidence: bug OpenCode #32504 (D009) + **leak console inter-harnesses** découvert v0.2 :
+les harnesses partagent le Chrome CDP et choisissent le 1er target `page` — réutiliser
+la page du harness précédent a fait fuiter les `console.error` volontaires de `test_v02`
+dans le check T8 de `test_headless` (18/19).
+Decision: `node tools/run_harnesses.mjs` (= `npm test`) est la procédure officielle de
+tests (build → preview 4173 → Chrome 9224 → harnesses → teardown + ports vérifiés) ;
+**chaque harness reçoit un target page neuf** (créé avant de fermer l'ancien).
+Reason: cycle de vie garanti par le tool call + isolation stricte des assertions console
+par target.
+
 ---
 
 ## Open questions
 
-- **`moveEntity` / `zone`** : **3e reproduction confirmée sur #5** (5 entités mobiles +
-  3 zones dont 2 multi-entités) → le seuil D002 est atteint : la décision de promotion au
-  core est maintenant **ouverte** (les deux candidates sont justifiées ; `zone` doit
-  inclure le multi-entités). Prochaine étape : concevoir + implémenter + valider +
-  documenter (ou décision explicite argumentée de ne pas le faire).
-- **Orchestrateur de harness** : le pattern `tools/run_harnesses.mjs` (cycle de vie
-  complet, workaround du bug OpenCode #32504) doit devenir le standard pour tous les
-  harness (remplacer le lancement détaché manuel des slices #1–#4).
-- **Recherche d'entité** : le jeu fait un scan O(n) de `rt.world.bodies` à chaque tick
-  (`bodyOf`). Faut-il une API core « body par id » ? (Friction faible mais récurrente.)
 - **`_debug`** : formaliser en API de test contractuelle ou le retirer ? (Utilité
-  prouvée sur les 4 harness ; statut actuel : non stable.)
+  prouvée sur les 6 harnesses ; statut actuel : non stable.)
 - **Polish KCC** : slide en pente, accélération/décélération — si un jeu futur en a
-  besoin (les 4 slices : non requis).
+  besoin (les 5 slices : non requis).
 - **Animation / root-motion** : quand le 1er asset animé est réellement nécessaire
   (aucun à ce jour).
-- **Copie GLB automatisée** au build (plugin Vite ou étape npm) pour supprimer le piège
-  de la copie manuelle.
+- **Déterminisme cross-machine** : un même fingerprint entre Linux et Windows
+  (aujourd'hui validé par machine, pas entre machines).
+- **Zones 3D (dimension Y)** / `onStay` comme event : seulement si un jeu réel les exige
+  (dette v0.2 documentée).
+
+**Résolues par v0.2** : `moveEntity`/`zone` (promues, D010/D011) ; orchestrateur standard
+(officialisé + target frais, D012) ; recherche d'entité par id (`entityPosition`, pas de
+`bodyOf` exposée — D010) ; copie GLB au build (automatisée par `run_harnesses.mjs --build`).
 
 ---
 
 ## Next experiments
 
-Ce que le **jeu #5** (ou les prochaines expériences) devrait mettre sous pression :
+Ce que les **prochaines expériences** devraient mettre sous pression :
 
-1. **`moveEntity`/`zone` sous pression** (si le design le justifie) : ≥ 2 ennemis
-   mobiles + ≥ 3 zones → mesurer si la friction se reproduit (3e occurrence = décision
-   D002).
+1. **10+ entités mobiles** : performance (coût WASM Rapier, sync mesh, raycast
+   verrouillage) — les 5 slices n'ont jamais dépassé 5 entités mobiles.
 2. **Asset animé** (root motion) : valider l'absence actuelle et le coût d'ajout
    (`AnimationMixer` côté core ou côté jeu ?).
-3. **10+ entités mobiles** : performance (coût WASM Rapier, sync mesh, raycast
-   verrouillage) — les 4 slices n'ont jamais dépassé 3 entités mobiles.
-4. **Objet interactif avec état de proximité** (pattern « clé » du #4) : vérifier si le
+3. **Objet interactif avec état de proximité** (pattern « clé » du #4) : vérifier si le
    pattern interact + règle EVENT→ACTION est réutilisable sans friction nouvelle.
-5. **Spawn d'entités par le jeu** (hors `spawnAsset` standard) : valider la voie
+4. **Spawn d'entités par le jeu** (hors `spawnAsset` standard) : valider la voie
    `rt.world` + entité ECS manuelle si un jeu doit créer des entités à la volée.
-6. **Déterminisme cross-machine** : un même fingerprint entre Linux et Windows
+5. **Déterminisme cross-machine** : un même fingerprint entre Linux et Windows
    (aujourd'hui validé par machine, pas entre machines).
+6. **Zones sous pression** : zones sur plusieurs tags avec entrées/sorties simultanées
+   (joueur + 5+ entités mobiles dans 3+ zones) — vérifier le coût de la résolution
+   dynamique des tags par tick.

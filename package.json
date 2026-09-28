@@ -8,6 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "glb": "node tools/cli.mjs",
+    "test": "node tools/run_harnesses.mjs --build",
+    "test:v02": "node tools/test_v02.mjs",
     "test:headless": "node tools/test_headless.mjs",
     "test:temple": "node tools/test_temple.mjs",
     "test:ruins": "node tools/test_ruins.mjs",

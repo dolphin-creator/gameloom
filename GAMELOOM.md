@@ -1,4 +1,4 @@
-# GameLoom — Manuel opérationnel (v0.1)
+# GameLoom — Manuel opérationnel (v0.2)
 
 > Source de vérité **opérationnelle** : état ACTUEL de GameLoom (API, CLI, conventions,
 > procédures) — **autonome** : un agent neuf crée, exécute, teste et débugue un jeu en n'en
@@ -83,25 +83,29 @@ tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex der
 ```
 ~/gameloom/
 ├── GAMELOOM.md ← ce fichier · EXPERIMENTS.md ← mémoire d'ingénierie · JOURNAL.md ← archive
-├── index/temple/ruins/dungeon.html ← shells des 4 jeux (canvas #game, HUD, overlays)
-├── package.json ← scripts : dev, build, preview, glb, test:headless/temple/ruins/dungeon
-├── tsconfig.json · vite.config.ts ← TS strict noEmit · multi-entry (4 HTML), base './'
-├── assets/ ← 10 GLB : barrel, crate, target, switch, guardian, artifact, ruins_column,
-│            dungeon_key, dungeon_mage, dungeon_spikes
+├── index/temple/ruins/dungeon/outpost.html ← shells des 5 jeux (canvas #game, HUD, overlays)
+│   · v02_test.html ← page de test des primitives core v0.2 (pas un jeu)
+├── package.json ← scripts : dev, build, preview, glb, test (orchestrateur),
+│   test:v02/headless/temple/ruins/dungeon/outpost
+├── tsconfig.json · vite.config.ts ← TS strict noEmit · multi-entry (6 HTML), base './'
+├── assets/ ← 11 GLB : barrel, crate, target, switch, guardian, artifact, ruins_column,
+│            dungeon_key, dungeon_mage, dungeon_spikes, survivor
 ├── src/core/ ← LE CORE (types, ecs, events, actions, glbs, runtime, index) — modifier
 │             seulement selon la politique documentaire + après EXPERIMENTS.md
-├── src/game/ ← 4 jeux (références d'usage) : main.ts (#1 Barrel Blaster),
-│              temple/main.ts (#2), ruins/main.ts (#3), dungeon/main.ts (#4)
-└── tools/    ← cli.mjs (CLI `glb`), test_headless/temple/ruins/dungeon.mjs (harness CDP 9224),
+├── src/game/ ← 5 jeux (références d'usage) : main.ts (#1 Barrel Blaster),
+│              temple/main.ts (#2), ruins/main.ts (#3), dungeon/main.ts (#4),
+│              outpost/main.ts (#5, zones + moveEntity core) · v02_test/main.ts (page debug)
+└── tools/    ← run_harnesses.mjs (ORCHESTRATEUR officiel, §15), cli.mjs (CLI `glb`),
+                test_v02/headless/temple/ruins/dungeon/outpost.mjs (harness CDP 9224),
                 make_glb.mjs, diag_*.mjs (one-shots), blender/ (make_assets.py, make_ruins_assets.py,
                 make_dungeon_assets.py)
 ```
 
-`src/core/runtime.ts` = moteur (Rapier+KCC, tick, règles, actions core, debug API) ;
-`types.ts` = types + namespace `com.gameloom.v0`. Nouveau jeu : lire `src/game/dungeon/main.ts`
-(récent/dense) ou `src/game/ruins/main.ts` (entité mobile).
+`src/core/runtime.ts` = moteur (Rapier+KCC, tick, règles, actions core, mouvement/zones v0.2, debug API) ;
+`types.ts` = types + namespace `com.gameloom.v0`. Nouveau jeu : lire `src/game/outpost/main.ts`
+(jeu le plus récent : moveEntity + zones core) ou `src/game/dungeon/main.ts` (dense).
 
-**Inventaire des 10 GLB existants** (capacités = métadonnées `com.gameloom.v0`, vérifiable
+**Inventaire des 11 GLB existants** (capacités = métadonnées `com.gameloom.v0`, vérifiable
 par `npm run glb -- inspect assets/<nom>.glb`) :
 
 | Asset | Body | Capacités (`components`) |
@@ -116,6 +120,7 @@ par `npm run glb -- inspect assets/<nom>.glb`) :
 | `dungeon_key.glb` | static | — |
 | `dungeon_mage.glb` | kinematic | `Health.max=80` (entité mobile, §5) |
 | `dungeon_spikes.glb` | static | — (plateforme 3×3 m de pointes) |
+| `survivor.glb` | kinematic | `Health.max=100` (entité mobile v0.2, §5) |
 
 ## 4. Quick Start
 
@@ -126,17 +131,23 @@ cd ~/gameloom && npm install                        # 1. install
 npx tsc --noEmit                                     # 2. typecheck (pas de script dédié)
 npm run build && cp assets/*.glb dist/assets/        # 3. build prod + copie GLB (OBLIGATOIRE)
 npm run preview                                      # 4. servir le build (http://localhost:4173)
-#    → #1: / · #2: /temple.html · #3: /ruins.html · #4: /dungeon.html
-npm run test:headless ; npm run test:temple ; npm run test:ruins ; npm run test:dungeon  # 5. tests (preview + Chrome §15)
+#    → #1: / · #2: /temple.html · #3: /ruins.html · #4: /dungeon.html · #5: /outpost.html
+#    · page debug v0.2: /v02_test.html
+node tools/run_harnesses.mjs --build                 # 5. tests OFFICIELS (build + preview + Chrome + 6 harnesses, §15)
 npm run glb -- inspect assets/barrel.glb             # 6. CLI glb (outillage asset)
 ```
 
-- `npm run build` = `tsc --noEmit && vite build` ; chaque jeu = une entrée HTML dans `rollupOptions.input` (`vite.config.ts`, 4 entrées).
+- `npm run build` = `tsc --noEmit && vite build` ; chaque jeu = une entrée HTML dans `rollupOptions.input` (`vite.config.ts`, 6 entrées).
 - **Ne PAS tester sur `npm run dev`** (5173) : HMR = double-boot (2 runtimes) → toujours
   build production (4173).
 - `npm run glb -- <args>` : le `--` sépare le script npm des arguments CLI.
+- **`node tools/run_harnesses.mjs` (= `npm test`) est le mécanisme officiel** : un seul
+  cycle de vie (build optionnel → preview 4173 → Chrome CDP 9224 → harnesses → teardown
+  garanti, ports vérifiés). Les scripts `test:<nom>` individuels supposent un Chrome CDP
+  déjà lancé (§15).
 - Chaque harness cible son jeu via `URL_TARGET` (défauts `http://localhost:4173/`,
-  `/temple.html`, `/ruins.html`, `/dungeon.html`) — overridable par la variable `URL_TARGET`.
+  `/temple.html`, `/ruins.html`, `/dungeon.html`, `/outpost.html`, `/v02_test.html`)
+  — overridable par la variable `URL_TARGET`.
 
 ## 5. Créer un jeu
 
@@ -181,7 +192,11 @@ impulse, source)` (dégâts radiaux + impulsion, cf. §8) · `rt.playerState()` 
 look, jump })` (input — la **seule** voie, convention n°3 : `move = [fwd, strafe]`) ·
 `rt.setLook(yaw, pitch)` (visée — source unique, convention n°4) · `rt.byId(id)` /
 `rt.byTag(tag)` (requêtes ECS → entités) · `rt.start()` (démarre la boucle) ·
-`rt.setPaused(p)` / `rt.tickOnce()` (temps déterministe, §12).
+`rt.setPaused(p)` / `rt.tickOnce()` (temps déterministe, §12) · **v0.2** :
+`rt.entityPosition(id)` → `[x, y, z] | null` (position Rapier d'une entité) ·
+`rt.moveEntity(id, target, speed, options?)` → `boolean` (§5, entités mobiles) ·
+`rt.faceEntity(id, target)` (orientation sans translation) ·
+`rt.createZone(options)` → `ZoneHandle` (§5, zones).
 
 **Tir hitscan** (code de jeu, pas du core) :
 
@@ -200,31 +215,44 @@ if (hit?.entity && hit.entity.id !== 'player')
 (effet immédiat) + animation du mesh (présentation, `onTick`). État ECS (health, tags,
 inspection) → `spawnAsset`.
 
-**Entités mobiles possédées par le jeu** (patterns : `src/game/ruins/main.ts`,
-`src/game/dungeon/main.ts`) : spawner `physics.body = 'kinematic'` ; le core pose
-`body.userData = <id>` au spawn et synchronise le mesh sur la position Rapier à chaque tick.
-Le jeu retrouve le rigid body (`rt.world.bodies.getAll()`, `b.userData === id`) et le déplace
-dans `onTick` : `body.setTranslation({...}, true)` + `body.setRotation({...}, true)`. Le KCC
-du joueur traite le corps kinematic comme un **obstacle solide** ; verrouiller le déplacement
-avec `rt.raycast` (origine décalée le long de la direction) pour empêcher la traversée des
-murs. Aucun `moveEntity`/`zone` dans le core — cf. §18.
+**Entités mobiles possédées par le jeu** (v0.2, `src/game/outpost/main.ts`) : spawner
+`physics.body = 'kinematic'` ; le core pose `body.userData = <id>` au spawn et synchronise le
+mesh sur la position Rapier à chaque tick. Le jeu déplace l'entité avec **`rt.moveEntity(id,
+target, speed, options?)`** : déplacement XZ de `speed × FIXED_DT` (clamp à la destination,
+Y conservé), orientation vers le target (`face: true` par défaut ; `face: false` = pas de
+rotation), `avoidObstacles: false` par défaut (à `true` : le step est clampé avant les
+obstacles via raycast — exclut le joueur + le body propre de l'entité — **pas de pathfinding**).
+Retourne `true` si déplacé, `false` sinon ; **refus** (`false` + `console.error`, entité
+immobile) pour le joueur (KCC), les bodies static/dynamic et les ids inconnus.
+`rt.faceEntity(id, target)` : orientation seule. `rt.entityPosition(id)` : position courante.
+**Pattern legacy (jeux #1–#4, toujours valide)** : retrouver le rigid body
+(`rt.world.bodies.getAll()`, `b.userData === id`) et le déplacer dans `onTick` :
+`body.setTranslation({...}, true)` + `body.setRotation({...}, true)` ; verrouiller le
+déplacement avec `rt.raycast` (origine décalée le long de la direction) pour empêcher la
+traversée des murs. Le KCC du joueur traite les corps kinematic comme des **obstacles solides**.
 
-**Zones / triggers** (pas de `rt.zone()` en v0.1 — du code de jeu) : une zone = test
-d'inclusion AABB écrit dans `rt.onTick`, avec un booléen **`previousInside`** pour détecter
-l'arête enter/exit — n'émettre `zone.enter`/`zone.exit` **que sur la transition**, jamais à
-chaque tick. Usages : zone de sortie (victoire), extraction, piège (dégâts à l'entrée puis
-périodiques), activation d'ennemi.
+**Zones / triggers (core v0.2 — `rt.createZone`)** : une zone = **AABB XZ multi-entités**
+dont l'état inside/outside est **possédé par le core** (le jeu fournit les handlers) :
 
 ```ts
-let inside = false;                                   // état d'arête par zone
-rt.onTick(() => {
-  const p = rt.playerState().pos;                    // position du joueur
-  const now = p[0] >= x1 && p[0] <= x2 && Math.abs(p[2]) <= zMax;   // inclusion AABB
-  if (now && !inside) rt.bus.emit('zone.enter', 'player', { data: { x: p[0], z: p[2] } });
-  if (!now && inside) rt.bus.emit('zone.exit', 'player', {});
-  inside = now;
+const h = rt.createZone({
+  id: 'evac',                                    // unique (console.error sinon)
+  bounds: { min: [12, -2], max: [15.5, 2] },      // [X, Z] — bornes INCLUSIVES, inversées normalisées
+  tags: ['player', 'survivor'],                   // UNION : 1 tag suffit, dédupliqué par id
+  onStay: (eid) => { /* 1× par fixed tick, par entité à l'intérieur — PAS un event */ },
 });
+h.isInside('player');                             // état courant (debug / logique de jeu)
+h.destroy();                                      // retire la zone (pas de zone.exit émis)
 ```
+
+Évaluation : **après la passe `onTick` du jeu, avant `rt.tick++`** (positions finales du
+tick). Le core émet **`zone.enter` / `zone.exit`** sur arête uniquement — `entity` = entité
+observée, `other` = id de la zone, `data = { zone, x, z }` — et appelle `onStay(eid)` chaque
+tick suivant (jamais au tick d'enter). Entité détruite = **purge silencieuse** (pas de
+`zone.exit` synthétique) ; `zone.destroy()` idem. Debug : `GameLoom.zones()` →
+`{ id, x1, x2, z1, z2, inside: string[] }[]`. **Pattern legacy (jeux #1–#4)** : inclusion
+AABB manuelle dans `onTick` + booléen `previousInside` pour les arêtes enter/exit —
+n'émettre que sur la transition.
 
 **Tags de scène par override** : `rt.spawnAsset(asset, at, { tags: [...] })` remplace le
 tag canonique (basename du GLB) ; le contexte de scène (ex. quel slot) est un tag, PAS une
@@ -290,7 +318,7 @@ VEC3 de `primitives[].attributes.POSITION` comptent — normales/couleurs à ign
 1.0) ; `dynamic` → `RigidBodyDesc.dynamic()` + damping (linéaire 0.6, angulaire 0.9) +
 `collider.setMass(mass)` — **masse sur le ColliderDesc, PAS le RigidBody** ; `kinematic` → `RigidBodyDesc.kinematicPositionBased()` (joueur, entités manipulées).
 
-**Constantes du monde (core, non configurables en v0.1)** : gravité `−19.62 m/s²` (2× g) ;
+**Constantes du monde (core, non configurables en v0.2)** : gravité `−19.62 m/s²` (2× g) ;
 déplacement `5.6 m/s` ; joueur = capsule `capsule(demi-hauteur 0.55, rayon 0.45)` + KCC (autostep 0.45/0.5,
 snapToGround 0.12, masse 80) ; œil à `+1.55` ; saut `v₀ = 8.2 m/s` (apogée ≈ 2.04 m, repos à y ≈ 0.92).
 
@@ -338,9 +366,11 @@ liste blanche** (tout nom accepté).
 | `health.zero` | `Health.current ≤ 0` (1×) | règles du jeu |
 | `collision.start` | à chaque contact Rapier | **aucune règle core** (émis + loggué) |
 | `player.died` | joueur à `health.zero` | règle du jeu (game over) |
+| `zone.enter` / `zone.exit` (v0.2) | arête inside/outside d'une zone `createZone` (multi-entités) | règles du jeu (§5) |
 
 Les jeux émettent leurs **propres événements de gameplay** via `rt.bus.emit(...)` (§5).
-⚠️ `types.ts` : constante `EVENTS` (5 noms, `collision.start` absent) + commentaire citant `wave.start, wave.clear, game.over, ammo.empty` — **jamais émis** (aspirationnels).
+⚠️ `types.ts` : constante `EVENTS` (7 noms core dont `zone.enter`/`zone.exit`, `collision.start` absent)
++ commentaire citant `wave.start, wave.clear, game.over, ammo.empty` — **jamais émis** (aspirationnels).
 
 ## 11. Actions + Rules
 
@@ -386,9 +416,10 @@ sync mesh/caméra + `onTick` + `tick++` + `time += 1/60`. API : `GameLoom.pause(
 | `doctor()` | `{ ok, warnings[], stats, assets{ loaded, without_gameloom_meta }, events_recent[] }` |
 | `pause()` / `resume()` / `step(n = 1)` / `setPaused(p)` / `isPaused()` | contrôle du temps et état de pause (§12) |
 | `rules()` / `actions()` | `{ target, event, hasIf, nActions, hasFn }[]` / actions du registry |
-| `version` | `"0.1.0"` |
+| `zones()` (v0.2) | `{ id, x1, x2, z1, z2, inside: string[] }[]` (les zones `createZone`, entités à l'intérieur) |
+| `version` | `"0.2.0"` |
 
-**13 méthodes + `version` + `_debug`.**
+**14 méthodes + `version` + `_debug`.**
 
 ### `GameLoom._debug` — API de dev/test **NON STABLE** ⚠️ (peut changer sans préavis ; développer/tester, pas gameplay produit)
 
@@ -423,16 +454,29 @@ Escalade (du moins coûteux au plus coûteux) — ne monter que si le niveau pr�
 
 ## 15. CDP / harness déterministe
 
-`tools/test_headless.mjs` = harness de référence ; `test_temple.mjs`, `test_ruins.mjs`,
-`test_dungeon.mjs` = **même pattern** (CDP `ws` → `Runtime.evaluate`, `check()`/bilan,
-temps par `pause()`/`step(n)`, `URL_TARGET` propre au jeu ; #3/#4 comparent un **fingerprint de ticks** entre runs). Nouveau jeu : dupliquer un harness, changer `URL_TARGET` + checks. Portable Windows/Linux.
+**Mécanisme officiel : `node tools/run_harnesses.mjs`** (= `npm test`). Cycle de vie complet
+et garanti : pré-nettoyage des ports → build (`--build`) → `vite preview` (4173) +
+**Chrome headless CDP (9224)** lancés détachés (logs tmp, PID conservés) → chaque harness
+(`tools/test_*.mjs`, **1 target page frais par harness** — isolation de la console) →
+teardown par arbre + vérification que 4173/9224 sont libres. Usage :
+`node tools/run_harnesses.mjs [test_xxx...] [--repeat N] [--build]` (sans arg : les 6
+harnesses — `test_v02`, `test_headless`, `test_temple`, `test_ruins`, `test_dungeon`,
+`test_outpost`) · exit 0 = tous verts, 1 = échec harness, 2 = infrastructure. Windows-safe
+(aucun processus persistant ne survit au tool call).
 
-1. **Chrome headless déjà lancé** (port CDP **9224**, WebGL SwiftShader, sans GPU) — le harness ne le démarre PAS :
-   - Linux : `google-chrome-stable --headless=new --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader --remote-debugging-port=9224 --user-data-dir=/tmp/chrome_gl --window-size=1280,720 --mute-audio about:blank`
-   - Windows : `Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--headless=new","--no-sandbox","--use-gl=angle","--use-angle=swiftshader","--enable-unsafe-swiftshader","--remote-debugging-port=9224","--user-data-dir=$env:TEMP\chrome_gl_cdp","--window-size=1280,720","--mute-audio","about:blank"`
-   Vérifier : `curl -s localhost:9224/json/version` → `"Browser": "Chrome/…"`. Processus
-   persistants Windows (Chrome, `npm run preview`) : lancement **détaché** (stdio vers log, PID conservé,
-   arrêt par PID) — jamais de handles hérités.
+`test_headless.mjs` = harness de référence ; les autres = **même pattern** (CDP `ws` →
+`Runtime.evaluate`, `check()`/bilan, temps par `pause()`/`step(n)`, `URL_TARGET` propre au
+jeu ; #3/#4/#5 comparent un **fingerprint de ticks** entre runs). Nouveau jeu : dupliquer
+un harness, changer `URL_TARGET` + checks. Portable Windows/Linux. Si un harness est lancé
+**seul** (`npm run test:<nom>`), il suppose la préparation manuelle ci-dessous :
+
+1. **Chrome headless déjà lancé** (port CDP **9224**, WebGL SwiftShader, sans GPU) :
+    - Linux : `google-chrome-stable --headless=new --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader --remote-debugging-port=9224 --user-data-dir=/tmp/chrome_gl --window-size=1280,720 --mute-audio about:blank`
+    - Windows : `Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--headless=new","--no-sandbox","--use-gl=angle","--use-angle=swiftshader","--enable-unsafe-swiftshader","--remote-debugging-port=9224","--user-data-dir=$env:TEMP\chrome_gl_cdp","--window-size=1280,720","--mute-audio","about:blank"`
+    + `vite preview` (4173). Vérifier : `curl -s localhost:9224/json/version` →
+    `"Browser": "Chrome/…"`. Processus persistants Windows (Chrome, `npm run preview`) :
+    lancement **détaché** (stdio vers log, PID conservé, arrêt par PID) — jamais de
+    handles hérités.
 2. **Ouvrir** : `Page.navigate` sur `URL_TARGET` (build production) ; attendre
    `typeof window.GameLoom === "object"`.
 3. **Input/temps** : `_debug.input({ move, jump })`, `aimAt`, `gameFire()`, `teleportPlayer` ; `pause()` + `step(n)` — jamais `sleep()`.
@@ -487,7 +531,7 @@ Violées = bugs réels (historique : `EXPERIMENTS.md`) :
 
 ## 18. Ce qui N'EXISTE PAS (ne pas supposer)
 
-Non implémenté en v0.1 — ne pas inventer d'API :
+Non implémenté en v0.2 — ne pas inventer d'API :
 
 - **Éditeur visuel / GUI** d'édition de scène.
 - **DSL GameLoom** — pas de langage, parser ou compilateur dédié.
@@ -501,11 +545,9 @@ Non implémenté en v0.1 — ne pas inventer d'API :
 - **Events `wave.start / wave.clear / game.over / ammo.empty`** — cités dans `types.ts`, **jamais émis** ;
   **actions `damage / play / spawn`** — citées, **non enregistrées**.
 - **`collision.start`** — émis/loggué, aucune règle ne s'y abonne.
-- **`moveEntity(...)` / `zone(...)`** — **non implémentées** ; entités mobiles (kinematic
-  déplacées par le jeu) = **code de jeu** (§5), zones (inclusion AABB + arêtes enter/exit
-  dans `onTick`) = **code de jeu** (§5, pattern zones). **Candidates** dans `EXPERIMENTS.md`
-  — tant qu'elles ne sont pas dans le code, ce ne sont **pas** de l'API.
+- **Pathfinding / navigation mesh** — `avoidObstacles` ne fait que clamping le step avant
+  les obstacles (raycast) ; pas d'évitement ni de replanification.
 
 ---
 
-*Version : GameLoom v0.1 — 4 vertical slices validées (Barrel Blaster, Temple Escape, Ruins Raid, Dungeon Assault). Historique, preuves et décisions : `EXPERIMENTS.md`.*
+*Version : GameLoom v0.2 — 5 vertical slices validées (Barrel Blaster, Temple Escape, Ruins Raid, Dungeon Assault, Outpost Rescue). Historique, preuves et décisions : `EXPERIMENTS.md`.*

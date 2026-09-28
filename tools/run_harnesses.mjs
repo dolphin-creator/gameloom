@@ -1,13 +1,16 @@
-// Orchestrateur de tests GameLoom — Windows-safe (bug OpenCode #32504: aucun processus
-// persistant ne doit survivre au tool call). Ce script possède le cycle de vie COMPLET:
-// pré-nettoyage ports → start vite preview (4173) + Chrome headless CDP (9224) → wait ready
-// → run des harnesses (test_*.mjs) → kill par arbre → vérification ports libres → exit.
-// Usage: node tools/run_harnesses.mjs [test_xxx...] [--repeat N]
-//   - sans arg: les 5 harnesses (headless, temple, ruins, dungeon, outpost)
+// Orchestrateur de tests GameLoom — mécanisme OFFICIEL (mécanisme unique de bout en bout:
+// build → vite preview (4173) → Chrome headless CDP (9224) → harnesses → cleanup garanti).
+// Windows-safe (bug OpenCode #32504: aucun processus persistant ne doit survivre au tool
+// call): ce script possède le cycle de vie COMPLET — pré-nettoyage ports → start
+// détaché (DETACHED|NEW_GROUP, logs tmp) → wait ready → run des harnesses (test_*.mjs)
+// → kill par arbre → vérification ports libres → exit.
+// Usage: node tools/run_harnesses.mjs [test_xxx...] [--repeat N] [--build]
+//   - sans arg: les 6 harnesses (v02, headless, temple, ruins, dungeon, outpost)
+//   - --build: npm run build + copie assets/ → dist/assets/ AVANT preview (entrée: npm test)
 //   - --repeat N: chaque harness lancé N fois (déterminisme/fingerprint)
-// Timeouts courts partout; cleanup garanti dans finally; zéro orphelin.
+// Exit codes: 0 = tous verts · 1 = échec harness · 2 = infrastructure (serveur/timeout).
 import { spawn, execSync } from 'node:child_process';
-import { openSync } from 'node:fs';
+import { openSync, cpSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -23,14 +26,22 @@ const NEW_GROUP = 0x00000200;
 const tmp = os.tmpdir();
 
 const argv = process.argv.slice(2);
+const buildFlag = argv.includes('--build');
 const repeatIdx = argv.indexOf('--repeat');
 const repeat = repeatIdx >= 0 ? Math.max(1, Number(argv[repeatIdx + 1] ?? 1)) : 1;
 const names = argv.filter((a) => a.startsWith('test_'));
-const harnesses = names.length ? names : ['test_headless', 'test_temple', 'test_ruins', 'test_dungeon', 'test_outpost'];
+const harnesses = names.length ? names : ['test_v02', 'test_headless', 'test_temple', 'test_ruins', 'test_dungeon', 'test_outpost'];
 
 const T0 = Date.now();
 const ts = () => `+${((Date.now() - T0) / 1000).toFixed(1)}s`;
 const log = (m) => console.log(`${ts()} ${m}`);
+
+if (buildFlag) {
+  log('build: npm run build (tsc + vite)');
+  execSync('npm run build', { cwd: REPO, stdio: 'inherit' });
+  log('build: copie assets/ → dist/assets/ (vite ne copie pas assets/)');
+  cpSync(join(REPO, 'assets'), join(REPO, 'dist', 'assets'), { recursive: true });
+}
 
 const portOpen = (port) => new Promise((res) => {
   const s = net.connect({ port, host: '127.0.0.1' }, () => { s.destroy(); res(true); });
@@ -121,10 +132,35 @@ const results = [];
   if (!chOk) { log(`FAIL: Chrome CDP ne répond pas sur ${CDP_PORT} (log: ${ch.logFile})`); teardown(); process.exit(2); }
   log(`chrome headless prêt (PID ${ch.p.pid})`);
 
+  // ---------- 1 target page FRAIS par harness (isolation console) ----------
+  // Chaque harness choisit le 1er target 'page' de ce Chrome. Réutiliser la
+  // page du harness précédent ferait fuiter ses console.error dans la vérif
+  // console du suivant (ex: refus moveEntity volontaires de test_v02 → T8 headless).
+  // On crée d'abord le nouveau target (jamais 0 onglet: headless=new quitte
+  // sinon), puis on ferme les anciens.
+  async function freshPageTarget() {
+    const base = `http://127.0.0.1:${CDP_PORT}/json`;
+    let created = null;
+    try {
+      let r = await fetch(`${base}/new?about:blank`, { method: 'PUT' });
+      if (!r.ok) r = await fetch(`${base}/new?about:blank`);
+      created = await r.json();
+    } catch (e) { log(`ERREUR: création du target page: ${e.message}`); return null; }
+    const list = await (await fetch(base)).json();
+    for (const t of list) {
+      if (t.type === 'page' && t.id !== created?.id) {
+        await fetch(`${base}/close/${t.id}`).catch(() => {});
+      }
+    }
+    return created;
+  }
+
   // ---------- run des harnesses ----------
   for (const h of harnesses) {
     for (let r = 1; r <= repeat; r++) {
       const label = repeat > 1 ? `${h} [run ${r}/${repeat}]` : h;
+      const fresh = await freshPageTarget();
+      if (!fresh) { teardown(); process.exit(2); }
       log(`--- ${label} ---`);
       const code = await new Promise((res) => {
         const t = setTimeout(() => { try { child.kill(); } catch { } res('TIMEOUT'); }, 150000);

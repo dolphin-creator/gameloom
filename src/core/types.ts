@@ -33,11 +33,38 @@ export type EntityT = {
   [key: string]: unknown;
 };
 
+// ---------- v0.2: mouvement générique des entités kinematic ----------
+export interface MoveEntityOptions {
+  face?: boolean;             // default true — oriente l'entité vers le target
+  avoidObstacles?: boolean;   // default false — step clampé avant les obstacles (raycast, sans pathfinding)
+}
+
+// ---------- v0.2: zones AABB XZ multi-entités ----------
+export interface ZoneBounds {
+  min: [number, number]; // [X, Z]
+  max: [number, number]; // [X, Z]
+}
+
+export interface ZoneOptions {
+  id: string;
+  bounds: ZoneBounds;
+  tags: string[];                    // UNION : une entité portant au moins un tag est observée
+  onStay?: (entityId: string) => void; // appelé 1× par fixed tick, pour chaque entité à l'intérieur — PAS un event
+}
+
+export interface ZoneHandle {
+  readonly id: string;
+  isInside(entityId: string): boolean;
+  destroy(): void;
+}
+
 // ---------- Vocabulaire canonique v0.1 ----------
 // Events (core): damage, health.zero, spawn, destroy, player.died
+// Events (core v0.2): zone.enter, zone.exit (entity = entité observée, other = id de la zone)
 // Events (jeu):  wave.start, wave.clear, game.over, ammo.empty
 export const EVENTS = [
   'damage', 'health.zero', 'spawn', 'destroy', 'player.died',
+  'zone.enter', 'zone.exit',
 ] as const;
 
 // Actions (core) — registry extensible

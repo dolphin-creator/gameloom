@@ -20,6 +20,7 @@ export default defineConfig({
         'ruins.html': 'ruins.html',
         'dungeon.html': 'dungeon.html',
         'outpost.html': 'outpost.html',
+        'v02_test.html': 'v02_test.html',
       },
     },
   },

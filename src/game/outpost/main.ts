@@ -1,20 +1,21 @@
-// Outpost Rescue — jeu #5 GameLoom v0.1 (FPS / rescue tactique low-poly)
+// Outpost Rescue — jeu #5 GameLoom v0.2 (FPS / rescue tactique low-poly)
 // Séparation stricte (philosophie GameLoom):
 //   - GLB (survivor/guardian/crate/ruins_column) = IDENTITÉ + CAPACITÉS STATIQUES
 //     (collider, physique, Health.max). AUCUN comportement.
 //   - RULES déclaratives: rt.on(tag, event, {if, do, fn}) → EVENT → ACTION
 //   - CODE DE JEU: 3 survivants (WAITING/FOLLOWING/EVACUATED), 2 ennemis (détection +
-//     poursuite + attaque), 2 zones dangereuses (feu/gaz, arêtes enter/exit + dégâts),
+//     poursuite + attaque), 2 zones dangereuses (feu/gaz, enter/exit + dégâts),
 //     zone d'évacuation, tir hitscan, HUD, audio → TypeScript.
-// Mouvement des entités (survivants/ennemis, kinematic) côté jeu: rt.world.bodies +
-// setTranslation/setRotation + verrouillage rt.raycast (pattern validé jeux #3/#4).
-// Zones (feu/gaz/évacuation): inclusion AABB dans onTick + booléen previousInside par
-// (zone, entité) → événement uniquement sur transition enter/exit (pattern GAMELOOM.md §5).
+// Mouvement des entités (survivants/ennemis, kinematic): primitives core v0.2
+// (rt.entityPosition / rt.moveEntity { avoidObstacles } / rt.faceEntity).
+// Zones (feu/gaz/évacuation): rt.createZone (AABB XZ multi-entités, tags UNION) →
+// events core zone.enter / zone.exit + onStay (dégâts périodiques) — l'état
+// inside/outside N×N est possédé par le core.
 
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { createRuntime, A, FIXED_DT } from '../../core';
-import type { Runtime, Vec3 } from '../../core';
+import type { Runtime, Vec3, ZoneHandle } from '../../core';
 
 // ---------- DOM ----------
 const $ = (id: string) => document.getElementById(id)!;
@@ -85,8 +86,12 @@ let gameOver: 'none' | 'died' | 'victory' = 'none';
 let lastFireAt = -Infinity;
 const FIRE_DAMAGE = 30;
 const FIRE_COOLDOWN_S = 0.25;
-const dangerPrev = new Map<string, boolean>();            // `${zone.id}:${entityId}` → inside précédent
-const dangerTimers = new Map<string, number>();           // `${zone.id}:${entityId}` → compteurs dégâts périodiques
+// Zones v0.2: l'état inside/outside N×N est possédé par le core (createZone).
+// Ici: compteurs de dégâts périodiques par (zone, entité) + handles pour les requêtes.
+const dangerTimers = new Map<string, number>();            // `${zoneId}:${entityId}` → compteur ticks
+const zoneHandles: Record<string, ZoneHandle> = {};
+let evacZone: ZoneHandle;
+let playerDangerCount = 0;
 
 // ---------- audio synth (Web Audio, aucun asset) ----------
 let actx: AudioContext | null = null;
@@ -115,75 +120,62 @@ function sfx(name: string) {
   } catch { /* audio optionnel */ }
 }
 
-// ---------- primitives de mouvement (côté jeu, primitives core publiques) ----------
-// Le core pose body.userData = id au spawn → le jeu retrouve le rigid body.
-// Kinematic: setTranslation() déplace; le KCC du joueur traite le corps comme obstacle.
-function bodyOf(id: string): RAPIER.RigidBody | null {
-  for (const b of rt.world.bodies.getAll()) if (b.userData === id) return b as RAPIER.RigidBody;
-  return null;
-}
-function faceBody(b: RAPIER.RigidBody, dx: number, dz: number) {
-  if (Math.hypot(dx, dz) < 1e-4) return;
-  const yaw = Math.atan2(-dx, -dz);
-  b.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
-}
-function chaseBody(b: RAPIER.RigidBody, target: Vec3, maxStep: number) {
-  const t = b.translation();
-  const dx = target[0] - t.x, dz = target[2] - t.z;
-  const d = Math.hypot(dx, dz);
-  if (d < 1e-4) return;
-  const ux = dx / d, uz = dz / d;
-  let step = maxStep;
-  const o: Vec3 = [t.x + ux * 0.9, t.y + 1.0, t.z + uz * 0.9];
-  const hit = rt.raycast(o, [ux, 0, uz], d);
-  if (hit) {
-    const limit = hit.distance + 0.9 - 0.5;
-    if (limit < step) step = limit;
-  }
-  if (step < 0.01) { faceBody(b, dx, dz); return; }
-  b.setTranslation({ x: t.x + ux * step, y: t.y, z: t.z + uz * step }, true);
-  faceBody(b, dx, dz);
-}
+// ---------- mouvement: primitives core v0.2 (rt.entityPosition / moveEntity / faceEntity) ----------
+// Le jeu ne voit plus jamais de body Rapier: positions via entityPosition (brutes),
+// déplacement via moveEntity (m/s, verrou legacy { avoidObstacles: true }), orientation
+// via faceEntity. L'IA (états, cooldowns, distances) reste 100 % code de jeu.
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
-// ---------- zones: inclusion AABB ----------
-const inZone = (z: { x1: number; x2: number; z1: number; z2: number }, pos: { x: number; z: number }) =>
-  pos.x >= z.x1 && pos.x <= z.x2 && pos.z >= z.z1 && pos.z <= z.z2;
-
-// ---------- zones dangereuses (feu/gaz): arêtes enter/exit + dégâts ----------
-// Cibles: joueur + survivants vivants. Événement uniquement sur transition (jamais par tick).
-function tickDangers() {
-  const p = rt.playerState();
-  const targets: { id: string; pos: { x: number; z: number } }[] = [{ id: 'player', pos: { x: p.pos[0], z: p.pos[2] } }];
-  for (const [id, s] of survivors) {
-    if (s.state === 'EVACUATED' || s.state === 'DEAD') continue;
-    const b = bodyOf(id);
-    if (!b) continue;
-    const t = b.translation();
-    targets.push({ id, pos: { x: t.x, z: t.z } });
+// ---------- zones dangereuses (feu/gaz): enter/exit + dégâts (zones core v0.2) ----------
+// Cibles: joueur + survivants vivants (filtre côté jeu: règle de jeu, pas le core).
+// L'arête inside/outside N×N est possédée par le core (zone.enter / zone.exit / onStay).
+function isLivingSurvivor(id: string) {
+  const s = survivors.get(id);
+  return !!s && s.state !== 'EVACUATED' && s.state !== 'DEAD';
+}
+function dangerEnter(id: string, zoneId: string, ctx: { data?: Record<string, unknown> }) {
+  const z = DANGERS.find((dd) => dd.id === zoneId)!;
+  const d = ctx.data ?? { zone: zoneId, x: 0, z: 0 };
+  rt.bus.emit('danger.enter', id, { other: zoneId, data: { zone: zoneId, x: round1(Number(d.x)), z: round1(Number(d.z)), damage: z.enterDmg } });
+  if (z.enterDmg > 0) rt.bus.emit('damage', id, { other: zoneId, amount: z.enterDmg, point: [Number(d.x), 0, Number(d.z)] });
+}
+function dangerExit(id: string, zoneId: string) {
+  dangerTimers.delete(`${zoneId}:${id}`);
+  rt.bus.emit('danger.exit', id, { other: zoneId, data: { zone: zoneId } });
+}
+function dangerStay(id: string, zoneId: string) {
+  const z = DANGERS.find((dd) => dd.id === zoneId)!;
+  if (z.tickDmg <= 0) return;
+  if (id !== 'player' && !isLivingSurvivor(id)) return;
+  const key = `${zoneId}:${id}`;
+  const c = (dangerTimers.get(key) ?? 0) + 1;
+  if (c >= z.every) {
+    dangerTimers.set(key, 0);
+    const t = rt.entityPosition(id) ?? [0, 0, 0];
+    rt.bus.emit('damage', id, { other: zoneId, amount: z.tickDmg, point: [t[0], 0, t[2]] });
+  } else {
+    dangerTimers.set(key, c);
   }
-  let playerInDanger = false;
-  for (const z of DANGERS) {
-    for (const tgt of targets) {
-      const inside = inZone(z, tgt.pos);
-      const key = `${z.id}:${tgt.id}`;
-      const prev = dangerPrev.get(key) ?? false;
-      if (inside && !prev) {
-        rt.bus.emit('danger.enter', tgt.id, { other: z.id, data: { zone: z.id, x: round1(tgt.pos.x), z: round1(tgt.pos.z), damage: z.enterDmg } });
-        if (tgt.id === 'player') playerInDanger = true;
-        if (z.enterDmg > 0) rt.bus.emit('damage', tgt.id, { other: z.id, amount: z.enterDmg, point: [tgt.pos.x, 0, tgt.pos.z] });
-      } else if (!inside && prev) {
-        rt.bus.emit('danger.exit', tgt.id, { other: z.id, data: { zone: z.id } });
-        dangerTimers.delete(key);
-      } else if (inside && z.tickDmg > 0) {
-        const c = (dangerTimers.get(key) ?? 0) + 1;
-        if (c >= z.every) { dangerTimers.set(key, 0); rt.bus.emit('damage', tgt.id, { other: z.id, amount: z.tickDmg, point: [tgt.pos.x, 0, tgt.pos.z] }); }
-        else dangerTimers.set(key, c);
-      }
-      dangerPrev.set(key, inside);
-    }
-  }
-  elDanger.style.display = playerInDanger ? 'block' : 'none';
+}
+function onDangerEnter(ctx: { entity: string; other?: string; data?: Record<string, unknown> }) {
+  if (ctx.other !== 'fire' && ctx.other !== 'gas') return;
+  dangerEnter(ctx.entity, ctx.other, ctx);
+}
+function onDangerExit(ctx: { entity: string; other?: string }) {
+  if (ctx.other !== 'fire' && ctx.other !== 'gas') return;
+  dangerExit(ctx.entity, ctx.other);
+}
+function onPlayerDangerEnter(ctx: { entity: string; other?: string; data?: Record<string, unknown> }) {
+  if (ctx.other !== 'fire' && ctx.other !== 'gas') return;
+  dangerEnter(ctx.entity, ctx.other, ctx);
+  playerDangerCount++;
+  elDanger.style.display = 'block';
+}
+function onPlayerDangerExit(ctx: { entity: string; other?: string }) {
+  if (ctx.other !== 'fire' && ctx.other !== 'gas') return;
+  dangerExit(ctx.entity, ctx.other);
+  playerDangerCount = Math.max(0, playerDangerCount - 1);
+  elDanger.style.display = playerDangerCount > 0 ? 'block' : 'none';
 }
 
 // ---------- survivants: E → FOLLOWING, suivi du joueur, zone d'évacuation → EVACUATED ----------
@@ -193,39 +185,29 @@ function interact() {
   let bestId: string | null = null, bestD = INTERACT_DIST;
   for (const [id, s] of survivors) {
     if (s.state !== 'WAITING') continue;
-    const b = bodyOf(id);
-    if (!b) continue;
-    const t = b.translation();
-    const d = Math.hypot(t.x - p.pos[0], t.z - p.pos[2]);
+    const t = rt.entityPosition(id);
+    if (!t) continue;
+    const d = Math.hypot(t[0] - p.pos[0], t[2] - p.pos[2]);
     if (d <= bestD) { bestD = d; bestId = id; }
   }
   if (!bestId) return;
   const s = survivors.get(bestId)!;
   s.state = 'FOLLOWING';
   rt.bus.emit('survivor.followed', bestId, { other: 'player', data: { survivor: s.kind, dist: round1(bestD) } });
+  if (evacZone.isInside(bestId)) evacuate(bestId); // recrutement déjà dans la zone (filet arête)
 }
 function tickSurvivors() {
   const p = rt.playerState();
-  const playerInEvac = inZone(EVAC, { x: p.pos[0], z: p.pos[2] });
+  const playerInEvac = evacZone.isInside('player');
   for (const [id, s] of [...survivors]) {
     if (s.state !== 'FOLLOWING') continue;
-    const b = bodyOf(id);
-    if (!b) continue;
-    const t = b.translation();
-    const target = playerInEvac ? EVAC_OFFSET[s.kind] : [p.pos[0], t.y, p.pos[2]] as Vec3;
-    const d = Math.hypot(target[0] - t.x, target[2] - t.z);
+    const t = rt.entityPosition(id);
+    if (!t) continue;
+    const target = playerInEvac ? EVAC_OFFSET[s.kind] : [p.pos[0], t[1], p.pos[2]] as Vec3;
+    const d = Math.hypot(target[0] - t[0], target[2] - t[2]);
     const stop = playerInEvac ? EVAC_STOP : FOLLOW_STOP;
-    if (d > stop) chaseBody(b, target, FOLLOW_SPEED * FIXED_DT);
-    // zone d'évacuation: FOLLOWING → EVACUATED (une seule fois, arête implicite par état)
-    if (s.state === 'FOLLOWING' && inZone(EVAC, { x: b.translation().x, z: b.translation().z })) {
-      s.state = 'EVACUATED';
-      evacCount++;
-      rt.bus.emit('survivor.evacuated', id, { other: 'evac_zone', data: { survivor: s.kind, count: evacCount } });
-      if (evacCount >= 3 && !rescueComplete) {
-        rescueComplete = true;
-        rt.bus.emit('rescue.completed', 'player', { data: { time: round1(rt.time) } });
-      }
-    }
+    if (d > stop) rt.moveEntity(id, target, FOLLOW_SPEED, { avoidObstacles: true });
+    // la transition FOLLOWING → EVACUATED est portée par le zone.enter d'évac (core)
   }
 }
 
@@ -233,10 +215,9 @@ function tickSurvivors() {
 function tickEnemies() {
   const p = rt.playerState();
   for (const [id, m] of [...mobs]) {
-    const b = bodyOf(id);
-    if (!b) { mobs.delete(id); continue; }
-    const t = b.translation();
-    const dx = p.pos[0] - t.x, dz = p.pos[2] - t.z;
+    const t = rt.entityPosition(id);
+    if (!t) { mobs.delete(id); continue; }
+    const dx = p.pos[0] - t[0], dz = p.pos[2] - t[2];
     const dist = Math.hypot(dx, dz);
     if (m.state === 'IDLE' && dist <= ENEMY.detect) {
       m.state = 'CHASE'; m.cooldown = 0;
@@ -249,29 +230,40 @@ function tickEnemies() {
     if (m.state === 'CHASE') {
       if (dist <= ENEMY.attack) {
         if (!m.inRange) { m.inRange = true; m.cooldown = Math.max(m.cooldown, ENEMY.coolFirst); }
-        faceBody(b, dx, dz);
+        rt.faceEntity(id, [p.pos[0], t[1], p.pos[2]]);
       } else {
         m.inRange = false;
-        chaseBody(b, [p.pos[0], t.y, p.pos[2]], ENEMY.chase * FIXED_DT);
+        rt.moveEntity(id, [p.pos[0], t[1], p.pos[2]], ENEMY.chase, { avoidObstacles: true });
       }
       if (m.cooldown > 0) m.cooldown--;
       else if (dist <= ENEMY.attack) {
         m.cooldown = ENEMY.coolMax;
-        rt.bus.emit('damage', 'player', { other: id, amount: ENEMY.damage, point: [t.x, t.y + 1.2, t.z] });
+        rt.bus.emit('damage', 'player', { other: id, amount: ENEMY.damage, point: [t[0], t[1] + 1.2, t[2]] });
       }
     }
   }
 }
 
 // ---------- zone d'évacuation: victoire si rescue.completed + joueur dans la zone ----------
-function checkEvacWin() {
-  if (gameOver !== 'none' || won) return;
-  const p = rt.playerState();
-  if (rescueComplete && inZone(EVAC, { x: p.pos[0], z: p.pos[2] })) {
-    won = true;
-    gameOver = 'victory';
-    rt.bus.emit('player.extracted', 'player', { other: 'evac_zone', data: { time: round1(rt.time) } });
+function evacuate(id: string) {
+  const s = survivors.get(id);
+  if (!s || s.state !== 'FOLLOWING') return;
+  s.state = 'EVACUATED';
+  evacCount++;
+  rt.bus.emit('survivor.evacuated', id, { other: 'evac_zone', data: { survivor: s.kind, count: evacCount } });
+  if (evacCount >= 3 && !rescueComplete) {
+    rescueComplete = true;
+    rt.bus.emit('rescue.completed', 'player', { data: { time: round1(rt.time) } });
+    // cas prouvé #5: le joueur peut être DÉJÀ dans la zone quand le 3e est évacué
+    tryEvacWin();
   }
+}
+function tryEvacWin() {
+  if (gameOver !== 'none' || won || !rescueComplete) return;
+  if (!evacZone.isInside('player')) return;
+  won = true;
+  gameOver = 'victory';
+  rt.bus.emit('player.extracted', 'player', { other: 'evac_zone', data: { time: round1(rt.time) } });
 }
 
 // ---------- tir joueur (hitscan, spécifique au jeu) ----------
@@ -468,6 +460,28 @@ async function boot() {
     mobs.set(e.id!, { kind, state: 'IDLE', cooldown: 0, inRange: false });
   });
 
+  // ================= ZONES (core v0.2: AABB XZ multi-entités, tags UNION) =================
+  // L'état inside/outside N×N est possédé par le core; le jeu fournit les handlers.
+  for (const z of DANGERS) {
+    zoneHandles[z.id] = rt.createZone({
+      id: z.id,
+      bounds: { min: [z.x1, z.z1], max: [z.x2, z.z2] },
+      tags: ['player', 'survivor'],
+      onStay: (eid) => dangerStay(eid, z.id),
+    });
+  }
+  evacZone = rt.createZone({
+    id: 'evac',
+    bounds: { min: [EVAC.x1, EVAC.z1], max: [EVAC.x2, EVAC.z2] },
+    tags: ['player', 'survivor'],
+  });
+  rt.on('player', 'zone.enter', { if: (c) => c.other === 'fire' || c.other === 'gas', fn: onPlayerDangerEnter });
+  rt.on('player', 'zone.exit', { if: (c) => c.other === 'fire' || c.other === 'gas', fn: onPlayerDangerExit });
+  rt.on('survivor', 'zone.enter', { if: (c) => (c.other === 'fire' || c.other === 'gas') && isLivingSurvivor(c.entity), fn: onDangerEnter });
+  rt.on('survivor', 'zone.exit', { if: (c) => c.other === 'fire' || c.other === 'gas', fn: onDangerExit });
+  rt.on('survivor', 'zone.enter', { if: (c) => c.other === 'evac', fn: (c) => evacuate(c.entity) });
+  rt.on('player', 'zone.enter', { if: (c) => c.other === 'evac', fn: () => tryEvacWin() });
+
   // ================= RULES (gameplay déclaratif) =================
   // Ennemi à 0 vie: score + son + destruction + événement de jeu
   rt.on('enemy', 'health.zero', {
@@ -497,12 +511,11 @@ async function boot() {
   rt.on('player', 'player.died', { fn: () => { if (gameOver === 'none') { gameOver = 'died'; showGameOver(); } } });
 
   // ================= BOUCLE DE JEU =================
+  // (les zones — dangers + évac — sont évaluées par le core après cette passe)
   rt.onTick(() => {
     if (gameOver === 'none') {
-      tickDangers();
       tickSurvivors();
       tickEnemies();
-      checkEvacWin();
     }
     presentTick(FIXED_DT);
     updateHUD();
@@ -523,41 +536,35 @@ async function boot() {
     return h ? { id: h.entity?.id ?? null, point: h.point, distance: h.distance } : null;
   };
   dbg.outpostState = () => {
-    const p = rt.playerState();
     const sList: unknown[] = [];
     for (const [id, s] of survivors) {
-      const b = bodyOf(id);
+      const pos = rt.entityPosition(id);
       const ent = rt.byTag('survivor').find((e) => e.id === id);
-      const t = b ? b.translation() : null;
       sList.push({
         id, kind: s.kind, state: s.state,
         health: ent?.Health ? ent.Health.current : null,
-        pos: t ? [t.x, t.y, t.z] : null,
+        pos: pos ? [pos[0], pos[1], pos[2]] : null,
       });
     }
     const eList: unknown[] = [];
     for (const [id, m] of mobs) {
-      const b = bodyOf(id);
-      if (!b) continue;
+      const pos = rt.entityPosition(id);
+      if (!pos) continue;
       const ent = rt.byTag('enemy').find((e) => e.id === id);
-      const t = b.translation();
-      eList.push({ id, kind: m.kind, state: m.state, cooldown: m.cooldown, health: ent?.Health ? ent.Health.current : null, pos: [t.x, t.y, t.z] });
+      eList.push({ id, kind: m.kind, state: m.state, cooldown: m.cooldown, health: ent?.Health ? ent.Health.current : null, pos: [pos[0], pos[1], pos[2]] });
     }
     return {
       survivors: sList,
       enemies: eList,
       evac: {
         x1: EVAC.x1, x2: EVAC.x2, z1: EVAC.z1, z2: EVAC.z2,
-        playerInside: inZone(EVAC, { x: p.pos[0], z: p.pos[2] }),
-        survivorInside: [...survivors.entries()].filter(([id, s]) => {
-          const b = bodyOf(id);
-          return b ? inZone(EVAC, { x: b.translation().x, z: b.translation().z }) : false;
-        }).map(([id]) => survivors.get(id)!.kind),
+        playerInside: evacZone.isInside('player'),
+        survivorInside: [...survivors.entries()].filter(([id]) => evacZone.isInside(id)).map(([, s]) => s.kind),
       },
       dangers: DANGERS.map((z) => ({
         id: z.id, x1: z.x1, x2: z.x2, z1: z.z1, z2: z.z2,
-        playerInside: inZone(z, { x: p.pos[0], z: p.pos[2] }),
-        inside: [...dangerPrev.entries()].filter(([k, v]) => k.startsWith(`${z.id}:`) && v).map(([k]) => k.split(':')[1]),
+        playerInside: zoneHandles[z.id].isInside('player'),
+        inside: ['player', ...survivors.keys()].filter((id) => zoneHandles[z.id].isInside(id)),
       })),
       evacCount, rescueComplete, won, dead: gameOver === 'died', gameOver,
       score: rt.player.Scored?.points ?? 0,

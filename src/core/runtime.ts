@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { EntityT, EventCtx, RuleBlock, GlbMeta, Vec3 } from './types';
+import type { EntityT, EventCtx, RuleBlock, GlbMeta, Vec3, MoveEntityOptions, ZoneOptions, ZoneHandle } from './types';
 import { createEcs, type EcsApi } from './ecs';
 import { createEventBus, type EventBus } from './events';
 import { runAction, listActions, registerAction } from './actions';
@@ -52,6 +52,27 @@ export interface Runtime {
   applyPlayerControl: (ctl: { move: [number, number]; look: [number, number]; jump: boolean }) => void;
   byId: (id: string) => EntityT | undefined;
   byTag: (tag: string) => EntityT[];
+  /** v0.2 — translation brute (non arrondie) d'une entité. null si id inconnu/détruit. */
+  entityPosition: (id: string) => Vec3 | null;
+  /**
+   * v0.2 — déplace une entité kinematic vers une destination absolue (XZ, y de l'entité
+   * conservé), au plus speed*FIXED_DT par appel (speed en m/s). Kinematic uniquement,
+   * jamais sur le player (no-op + console.error). avoidObstacles : verrou legacy prouvé
+   * #3–#5 (raycast horizontal y+1,0, départ décalé 0,9 m, arrêt 0,5 m avant l'arête de
+   * l'obstacle; step limité à 0,4 m quand le point de sonde est dans l'obstacle).
+   * Aucun pathfinding, aucun stop dur. Exclut le joueur ET le body propre.
+   * true si une translation a été appliquée, false sinon.
+   */
+  moveEntity: (id: string, target: Vec3, speed: number, options?: MoveEntityOptions) => boolean;
+  /** v0.2 — oriente une entité kinematic vers le target (rotation Y seule), sans déplacer. */
+  faceEntity: (id: string, target: Vec3) => void;
+  /**
+   * v0.2 — zone AABB XZ multi-entités (bornes inclusives, min/max normalisés).
+   * tags = UNION, résolus dynamiquement à chaque fixed tick. Évaluée après la passe
+   * onTick du jeu, avant l'incrément du tick. Events core: zone.enter / zone.exit
+   * (entity = entité observée, other = id de la zone, data = { zone, x, z }).
+   */
+  createZone: (options: ZoneOptions) => ZoneHandle;
   /** Abonnement à la boucle déterministe (un seul tick après la physique). */
   onTick: (fn: () => void) => () => void;
   playerState: () => { pos: Vec3; yaw: number; pitch: number; grounded: boolean; vel: Vec3 };
@@ -61,6 +82,15 @@ export interface Runtime {
 }
 
 interface GltfCache { scene: THREE.Group; meta: GlbMeta | null }
+
+// v0.2 — état interne d'une zone AABB XZ (bornes normalisées x1≤x2, z1≤z2)
+interface ZoneState {
+  id: string;
+  x1: number; x2: number; z1: number; z2: number;
+  tags: string[];
+  onStay?: (entityId: string) => void;
+  inside: Set<string>;
+}
 
 let idSeq = 0;
 function nextId(prefix: string) { return `${prefix}_${(idSeq++).toString(36).padStart(3, '0')}`; }
@@ -105,6 +135,7 @@ export async function createRuntime(canvas: HTMLCanvasElement, hooks: GameHooks 
   const destroyed = new Set<string>();
   const rules: Runtime['rules'] = [];
   const tickFns: Array<() => void> = [];
+  const zones = new Map<string, ZoneState>();
   function onTick(fn: () => void) {
     tickFns.push(fn);
     return () => { const i = tickFns.indexOf(fn); if (i >= 0) tickFns.splice(i, 1); };
@@ -119,6 +150,7 @@ export async function createRuntime(canvas: HTMLCanvasElement, hooks: GameHooks 
     player: null as unknown as EntityT,
     tick: 0, time: 0, paused: false,
     on, spawnAsset, preloadAssets, raycast, explodeAt, removeEntity,
+    entityPosition, moveEntity, faceEntity, createZone,
     setPaused: (p) => { rt.paused = p; },
     step: (n = 1) => { rt.paused = true; for (let i = 0; i < n; i++) tickOnce(); renderer.render(scene, camera); },
     tickOnce, applyPlayerControl, byId, byTag, onTick,
@@ -240,6 +272,131 @@ export async function createRuntime(canvas: HTMLCanvasElement, hooks: GameHooks 
     return { entity: eid ? byId(eid) ?? null : null, point: [p.x, p.y, p.z] as Vec3, distance: toi };
   }
 
+  // ---------- v0.2: mouvement générique des entités kinematic ----------
+  // Le core possède bodyById (posé au spawn); le jeu ne voit jamais RAPIER.
+  // Convention (validée games #3–#5): raycast de verrou horizontal y+1,0, départ décalé
+  // 0,9 m, arrêt 0,5 m avant l'obstacle, eps 1e-4, yaw = atan2(-dx,-dz).
+  function movableEntity(id: string): { e: EntityT; b: RAPIER.RigidBody } | null {
+    if (id === 'player') {
+      console.error('[GameLoom] moveEntity/faceEntity: le player est contrôlé par le KCC (utilisez applyPlayerControl)');
+      return null;
+    }
+    const e = byIdMap.get(id);
+    if (!e) { console.error(`[GameLoom] moveEntity/faceEntity: entité inconnue: ${id}`); return null; }
+    const b = bodyById.get(id);
+    if (!b) { console.error(`[GameLoom] moveEntity/faceEntity: pas de body pour ${id}`); return null; }
+    if (e.Physics?.body !== 'kinematic') {
+      console.error(`[GameLoom] moveEntity/faceEntity: ${id} n'est pas kinematic (${e.Physics?.body})`);
+      return null;
+    }
+    return { e, b };
+  }
+
+  function entityPosition(id: string): Vec3 | null {
+    const b = bodyById.get(id);
+    if (!b) return null;
+    const t = b.translation();
+    return [t.x, t.y, t.z];
+  }
+
+  function faceYaw(b: RAPIER.RigidBody, dx: number, dz: number) {
+    if (Math.hypot(dx, dz) < 1e-4) return;
+    const yaw = Math.atan2(-dx, -dz);
+    b.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
+  }
+
+  function faceEntity(id: string, target: Vec3): void {
+    const mv = movableEntity(id);
+    if (!mv) return;
+    const t = mv.b.translation();
+    faceYaw(mv.b, target[0] - t.x, target[2] - t.z);
+  }
+
+  function moveEntity(id: string, target: Vec3, speed: number, options?: MoveEntityOptions): boolean {
+    const mv = movableEntity(id);
+    if (!mv) return false;
+    const t = mv.b.translation();
+    const dx = target[0] - t.x, dz = target[2] - t.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 1e-4) return false;
+    const ux = dx / d, uz = dz / d;
+    let step = Math.min(speed * FIXED_DT, d);
+    if (options?.avoidObstacles) {
+      const hit = world.castRayAndGetNormal(
+        new RAPIER.Ray({ x: t.x + ux * 0.9, y: t.y + 1.0, z: t.z + uz * 0.9 }, { x: ux, y: 0, z: uz }),
+        step, true,
+        undefined, undefined, playerCollider, mv.b, // exclure le joueur ET le body propre (pas de TOI=0 sur soi)
+      );
+      if (hit) {
+        // Formule prouvée #3–#5 (port fidèle du verrou legacy): l'obstacle est à
+        // 0,9 + toi de l'entité, on s'arrête 0,5 m avant son arête. Quand le point de
+        // sonde est DANS l'obstacle (toi ≈ 0), le step est limité à 0,4 m — c'est le
+        // comportement réel observé dans les jeux (pas de stop dur, pas de pathfinding).
+        const limit = hit.timeOfImpact + 0.9 - 0.5;
+        if (limit < step) step = limit;
+      }
+    }
+    if (step < 0.01) {
+      if (options?.face !== false) faceYaw(mv.b, dx, dz);
+      return false;
+    }
+    mv.b.setTranslation({ x: t.x + ux * step, y: t.y, z: t.z + uz * step }, true);
+    if (options?.face !== false) faceYaw(mv.b, dx, dz);
+    return true;
+  }
+
+  // ---------- v0.2: zones AABB XZ multi-entités ----------
+  function createZone(options: ZoneOptions): ZoneHandle {
+    if (zones.has(options.id)) console.error(`[GameLoom] createZone: id en double: ${options.id}`);
+    const [minX, minZ] = options.bounds.min;
+    const [maxX, maxZ] = options.bounds.max;
+    const zn: ZoneState = {
+      id: options.id,
+      x1: Math.min(minX, maxX), x2: Math.max(minX, maxX),
+      z1: Math.min(minZ, maxZ), z2: Math.max(minZ, maxZ),
+      tags: [...options.tags],
+      onStay: options.onStay,
+      inside: new Set(),
+    };
+    zones.set(zn.id, zn);
+    return {
+      id: zn.id,
+      isInside(entityId: string) { return zn.inside.has(entityId); },
+      destroy() { zones.delete(zn.id); },
+    };
+  }
+
+  function tickZones() {
+    const alive = new Set<string>();
+    for (const e of ecs.list()) if (e.id) alive.add(e.id);
+    for (const zn of zones.values()) {
+      // purge silencieuse des entités détruites (aucun zone.exit synthétique)
+      for (const eid of [...zn.inside]) if (!alive.has(eid)) zn.inside.delete(eid);
+      // résolution dynamique des tags (UNION), dédupliquée par id
+      const seen = new Map<string, EntityT>();
+      for (const tag of zn.tags) {
+        for (const e of ecs.byTag(tag)) {
+          if (e.id && !seen.has(e.id)) seen.set(e.id, e);
+        }
+      }
+      for (const eid of seen.keys()) {
+        const b = bodyById.get(eid);
+        const t = b ? b.translation() : null;
+        const inside = !!t && t.x >= zn.x1 && t.x <= zn.x2 && t.z >= zn.z1 && t.z <= zn.z2;
+        const was = zn.inside.has(eid);
+        if (inside && !was) {
+          zn.inside.add(eid);
+          bus.emit('zone.enter', eid, { other: zn.id, data: { zone: zn.id, x: t!.x, z: t!.z } });
+        } else if (!inside && was) {
+          zn.inside.delete(eid);
+          bus.emit('zone.exit', eid, { other: zn.id, data: { zone: zn.id, x: t?.x ?? 0, z: t?.z ?? 0 } });
+        } else if (inside && was) {
+          zn.onStay?.(eid);
+        }
+      }
+    }
+  }
+
   // ---------- explosion radiale ----------
   function explodeAt(point: Vec3, radius: number, damage: number, impulse: number, source: string) {
     const r2 = radius * radius;
@@ -288,6 +445,8 @@ export async function createRuntime(canvas: HTMLCanvasElement, hooks: GameHooks 
     }
     ecs.remove(e);
     byIdMap.delete(id);
+    // v0.2: purge silencieuse de l'état des zones (aucun zone.exit synthétique)
+    for (const zn of zones.values()) zn.inside.delete(id);
   }
 
   // ---------- règles ----------
@@ -424,6 +583,9 @@ export async function createRuntime(canvas: HTMLCanvasElement, hooks: GameHooks 
     // logique périodique du jeu (après physique, même pas de temps)
     for (const fn of [...tickFns]) fn();
 
+    // v0.2: zones — positions finales du tick (après le jeu), avant l'incrément
+    tickZones();
+
     rt.tick++;
     rt.time += FIXED_DT;
     bus.tickRef.tick = rt.tick;
@@ -482,7 +644,7 @@ export async function createRuntime(canvas: HTMLCanvasElement, hooks: GameHooks 
 
   // ---------- DEBUG API (JSON compact) ----------
   (window as any).GameLoom = {
-    version: '0.1.0',
+    version: '0.2.0',
     inspect(id: string) {
       const e = byId(id);
       if (!e) return { error: `entité inconnue: ${id}` };
@@ -544,6 +706,11 @@ export async function createRuntime(canvas: HTMLCanvasElement, hooks: GameHooks 
     isPaused() { return rt.paused; },
     rules: () => [...rules],
     actions: () => listActions(),
+    zones: () => {
+      const out: { id: string; x1: number; x2: number; z1: number; z2: number; inside: string[] }[] = [];
+      for (const zn of zones.values()) out.push({ id: zn.id, x1: zn.x1, x2: zn.x2, z1: zn.z1, z2: zn.z2, inside: [...zn.inside] });
+      return out;
+    },
     _debug: {
       setLook(y: number, p: number) { yaw = y; pitch = Math.max(-1.45, Math.min(1.45, p)); },
       look() { return { yaw: round(yaw), pitch: round(pitch) }; },

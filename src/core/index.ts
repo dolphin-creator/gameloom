@@ -6,4 +6,5 @@ export { NS, readGlbMeta, readGlbJson } from './glbs';
 export type {
   EntityT, EventCtx, RuleBlock, GlbMeta, Vec3,
   CmpHealth, CmpExplosive, CmpScored, CmpPhysics, CmpCollider,
+  MoveEntityOptions, ZoneBounds, ZoneOptions, ZoneHandle,
 } from './types';

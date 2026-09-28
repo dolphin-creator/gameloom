@@ -504,6 +504,143 @@ zone en double = avertissement, non bloquant.
 
 ---
 
+## Game #6 — Reactor Defense (test black-box v0.2 : 3 relais en ordre libre, 5 ennemis, séquence réacteur interruption/reprise)
+
+**Objectif** : (a) 6e vertical slice jouable ; (b) **test black-box de GameLoom v0.2** :
+un agent neuf construit le jeu en ne lisant que `GAMELOOM.md` (EXPERIMENTS/JOURNAL,
+`src/core/**`, sources + harnesses des Games #1–5 **interdits**), note
+`DOC_GAP` / `CORE_FRICTION` / `GAME_FRICTION` / `BUG` et **ne modifie pas le core**.
+
+**CORE_ACCESS** : **0 lecture core, 0 modification**. Seuls « détecteurs » utilisés :
+`tsc --noEmit` (workflow documenté, a révélé les types exacts de `spawnAsset`,
+`applyPlayerControl`, `ZoneBounds`, payload d'event) et une sonde runtime éphémère
+(shape de l'entité retournée par `spawnAsset`).
+
+**Architecture testée** :
+- **Map** : installation extérieure bornée 48×48 m ; réacteur central (asset **nouveau**
+  `reactor.glb` : `make_glb.mjs` + `glb collider auto` + `physics set static` + `validate`
+  + `doctor` OK) ; 4 piliers `ruins_column` flanquant le réacteur (4 routes diagonales),
+  4 crates couvertures ; sol + 4 murs limites = objets du monde sans entité ECS
+  (`rt.world` + `rt.scene`, pattern §5).
+- **3 relais** (`switch.glb` réutilisé, tag override `relay`) : A(-16,-12) B(16,-12)
+  C(0,16) ; interaction proximité 3 m + touche E (ou `gameInteract`), **ordre libre**
+  (aucune séquence imposée), activation 1× → event `relay.activated` ; HUD `RELAIS n/3`.
+- **5 ennemis** (`guardian.glb` réutilisé, kinematic, `Health.max=100`) : 3 initiaux
+  (±9,±9) et (0,-9) + **2 renforts spawnés exactement une fois** au 1er démarrage du
+  réacteur ((8,4) et (-8,-4)). Comportement : détection ≤ 13 m →
+  `moveEntity(..., 3.2 m/s, { avoidObstacles: true })` → attaque ≤ 2.0 m (8 dégâts,
+  cooldown 1 s en temps de jeu). Un seul `onTick` (ordre stable = ordre de spawn).
+- **Réacteur** : zone `createZone({ id: 'reactor', bounds: [-4,-4]/[4,4], tags: ['player'] })` ;
+  avant 3 relais, l'entrée ne démarre rien ; après 3 relais, `zone.enter` →
+  `reactor.start` (1re fois) ou `reactor.resume` (reprise) ; `onStay` = +1 tick
+  (180 ticks = 100 %), `zone.exit` → `reactor.interrupt` (**progression conservée,
+  pas de reset**) ; `reactor.online` + `game.victory` à 180 (overlay
+  `REACTOR ONLINE / MISSION COMPLETE`).
+- **Combat** : tir hitscan joueur (œil +1.55, `rt.raycast`, 25 dégâts, sans munitions) ;
+  ennemi `health.zero` → `enemy.killed` + destruction ; ennemi → `damage` joueur ;
+  `player.died` → `game.over` (overlay `GAME OVER`).
+- **Événements de jeu émis** (8) : `relay.activated`, `reactor.start`,
+  `reactor.reinforcements`, `reactor.interrupt`, `reactor.resume`, `reactor.online`,
+  `game.victory`, `enemy.killed` (+ réutilisation core `player.died`, `game.over`,
+  `damage`, `zone.enter`/`zone.exit`).
+- **Hooks `_debug`** : `gameFire()`, `gameInteract()`, `reactorState()` (JSON : relays,
+  `reactor{ seqTicks, progress, started, online, inZone }`, reinforcements, enemies via
+  `entities({ tag: 'guardian' })`, player, victory, playerDead).
+- **Visée** : convention calibrée fin de run (cf. DOC_GAP 1) :
+  `dir = (−sin(yaw)·cos(pitch), sin(pitch), −cos(yaw)·cos(pitch))` (yaw 0 = −Z,
+  pitch > 0 = lever).
+
+**Résultats** : harness **53/53** (les 22 exigences de la mission + sous-checks) —
+**5 runs (`--repeat 5`), fingerprint identique** :
+```json
+{"relays":["C@175","A@176","B@177"],"reactorStartTick":178,"reinforcementsTick":178,
+ "interruptProgress":65,"resumeTick":275,"reactorOnlineTick":390,"victoryTick":390,
+ "enemiesKilled":3,"playerDamageTaken":16,
+ "final":{"relays":3,"progress":180,"victory":true,"playerDead":true,"guardiansAlive":2,
+ "playerHealth":0,"playerPos":[2.935,0.92,-2.862]}}
+```
+**Régressions** (orchestrateur officiel, toutes vertes) : v0.2 30/30 · #1 19/19 ·
+#2 14/14 · #3 21/21 · #4 34/34 · #5 32/32 — **Games #1–5 : fichiers intacts,
+zéro régression**.
+
+**DOC_GAP (3)** :
+1. **Convention de visée** — §5 montre le hitscan avec `lookDir()` sans donner la
+   convention yaw/pitch → vecteur. Calibration empirique (`aimAt` + `look`) + validation
+   fin de bout en bout (12 tirs / 3 kills) :
+   `dir = (−sin(yaw)·cos(pitch), sin(pitch), −cos(yaw)·cos(pitch))`, yaw 0 = −Z.
+   → `GAMELOOM.md` §5 complété (une ligne).
+2. **Format `health` en debug** — `snapshot().player.health` et `entities()[].health`
+   renvoient la chaîne `"current/max"` (ex. `"100/100"`), **pas un nombre** → les
+   assertions numériques échouent au premier contact. → `GAMELOOM.md` §13 précisé.
+3. **Type retour de `spawnAsset`** — retourne un **objet entité** (`EntityT`, avec
+   `id: string`) et non l'id : `→ entité ou null`. L'extraction de `.id` est
+   indispensable (les ids circulent partout : bus, `entityPosition`, `byId`).
+   → `GAMELOOM.md` §5 précisé.
+
+**CORE_FRICTION** : **AUCUNE**. La surface v0.2 (`moveEntity` / `faceEntity` /
+`entityPosition` / `createZone` + events `zone.*` / `rt.bus` / `rt.raycast` / debug API)
+couvre tout le besoin sans aucun contournement : pas de `bodyOf`/`userData`, pas d'AABB
+manuel, pas de verrou raycast legacy, pas d'état d'arête enter/exit manuel (zones
+possédées par le core). **Premier slice construit directement sur v0.2** (#5 était v0.1
++ migration) : les 26 LOC/jeu de « mobile entity » et ~46 LOC/jeu de « zones » mesurées
+en #3–#5 ont **disparu**.
+
+**GAME_FRICTION** (complexité propre à ce gameplay, ne doit PAS entrer dans GameLoom) :
+1. cooldown d'attaque par ennemi (`lastAttackTime` en temps de jeu `rt.time`) — même
+   famille que #3/#4/#5.
+2. Chorégraphie du harness : tuer les 3 ennemis initiaux **avant** la séquence finale de
+   180 ticks pour que le joueur ne meure pas sous les renforts (+ `setPlayerHealth(100)`
+   pour l'isolation de test) — orchestration de test, pas d'API.
+3. Preuve d'**ordre libre** : activer C→A→B dans le harness pour démontrer qu'aucune
+   séquence A→B→C n'est imposée (design de test, pas d'API).
+
+**Bugs** : **0** (core et jeu). 1er run du harness (45/52) : les 7 échecs étaient tous
+côté **harness** (health chaîne vs nombre ; erreur de calcul progression — le `step(5)`
+du check T11 s'effectue DANS la zone : 5+60 = 65, pas 60). Le code jeu était correct
+dès le 1er run.
+
+**Observations** :
+1. **Validation black-box v0.2 = RÉUSSIE** : `GAMELOOM.md` seul + outillage documenté
+   (tsc, CLI glb, orchestrateur) suffit pour un jeu jouable et gagnable ; les seules
+   découvertes d'API viennent des outils documentés (erreurs tsc, sonde runtime).
+2. **0 lecture core / 0 lecture de jeu / 0 lecture de harness** — l'agent #5 avait
+   nécessité 1 lecture core post-DOC_GAP : le manuel v0.2 + tsc est strictement moins
+   exigeant que le v0.1.
+3. **Patterns récurrents (6e occurrence)** : fingerprint de ticks déterministe ;
+   0 screenshot nécessaire (JSON-first, D004) ; famille ennemi
+   « détecter → `moveEntity` → attaquer à portée » ; hooks `_debug` par jeu ; harness CDP
+   dupliqué du pattern avec `URL_TARGET` propre.
+4. **Physique du joueur mort** : le corps du joueur mort est déplacé par
+   dé-pénétration KCC contre les colliders kinematic des ennemis en poursuite
+   (`playerPos` final ≠ position de téléportation) — déterministe et sans effet
+   gameplay (victoire déjà acquise) ; à retenir si un futur jeu gère les cadavres.
+5. **`onStay` comme progression** : exact et déterministe (+1/tick, jamais au tick
+   d'enter) — parfaitement adapté à une séquence de démarrage avec
+   interruption/reprise sans reset.
+6. **Objet interactif avec état de proximité** (open question « next experiments » #3,
+   pattern « clé » du #4) : validé sans friction nouvelle (proximité + E + event 1× +
+   hint HUD) — le pattern interact + règle EVENT→ACTION est réutilisable tel quel.
+7. **`game.victory` puis mort du joueur après victoire** : la voie `player.died` →
+   `game.over` reste disponible post-victoire (check T22) sans contredire la victoire
+   déjà acquise (flag `victoryEmitted`).
+
+**Comparaison avec les expériences précédentes** :
+- **#5 (même type de test black-box)** : 1 DOC_GAP (liste §5 incomplète, depuis corrigée)
+  + 3 bugs de friction + 26 LOC/jeu (entité mobile) + ~46 LOC/jeu (zones multi-entités)
+  de contournement. **#6** : **0 LOC de contournement** sur ces deux axes (primitives
+  core v0.2), 3 DOC_GAP de **précision documentaire** (convention visée, format health,
+  type retour `spawnAsset`), 0 bug de code. **Les promotions v0.2 (D010/D011) ont
+  livré** : la friction mesurée sur #3/#4/#5 n'existe plus côté jeu.
+- **Déterminisme** : 6e slice consécutive à 100 % (fingerprint identique sur 5 runs,
+  Windows, Chrome headless SwiftShader).
+- **Processus Windows** (D009/D012) : orchestrateur uniquement, 0 processus orphelin,
+  ports 4173/9224 vérifiés libres après chaque run.
+
+**Nouvelles candidates** : **AUCUNE** — aucune friction nouvelle à absorber ; aucune
+demande de modification du core issue de ce slice.
+
+---
+
 ## Cross-game observations
 
 Synthèse des 5 slices :

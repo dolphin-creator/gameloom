@@ -65,6 +65,16 @@ const RECIPES = {
       { geo: boxGeometry(0.09, 0.13, 0.09, 0, 0.59, 0), material: MAT_GOLD },  // levier → 0.72
     ],
   },
+  // Réacteur (installation ~2.5 m): socle large + corps + bande dorée + colonne de tête (4 primitives, 1 mesh)
+  reactor: {
+    name: 'Reactor',
+    prims: [
+      { geo: boxGeometry(1.3, 0.25, 1.3, 0, 0.25, 0), material: MAT_STONE },  // socle 2.6×0.5 → 0.5
+      { geo: boxGeometry(0.85, 0.5, 0.85, 0, 1.0, 0), material: MAT_STONE },  // corps 1.7×1.0 → 1.5
+      { geo: boxGeometry(1.0, 0.08, 1.0, 0, 1.63, 0), material: MAT_GOLD },   // bande → 1.71
+      { geo: boxGeometry(0.5, 0.5, 0.5, 0, 2.31, 0), material: MAT_STONE },   // colonne de tête → 2.81
+    ],
+  },
 };
 
 // ---------- assemblage GLB ----------

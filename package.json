@@ -14,7 +14,8 @@
     "test:temple": "node tools/test_temple.mjs",
     "test:ruins": "node tools/test_ruins.mjs",
     "test:dungeon": "node tools/test_dungeon.mjs",
-    "test:outpost": "node tools/test_outpost.mjs"
+    "test:outpost": "node tools/test_outpost.mjs",
+    "test:reactor": "node tools/test_reactor.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

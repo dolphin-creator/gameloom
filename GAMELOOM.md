@@ -182,7 +182,8 @@ actions `explode/destroy/addScore/sound`, système `damage → health.zero`. **L
 vagues, munitions, audio, HUD, règles.
 
 **Méthodes Runtime appelables du code jeu** (public, `interface Runtime`) :
-`rt.spawnAsset(asset, at, overrides?)` → entité ou `null` · `rt.preloadAssets(assets[])`
+`rt.spawnAsset(asset, at, overrides?)` → entité `{ id, … }` (**id = `string`**) ou `null`
+· `rt.preloadAssets(assets[])`
 (charge les GLB avant spawn — optionnel) · `rt.raycast(origin, dir, maxDist)` →
 `{ entity, point, distance } | null` (exclut la capsule du joueur) · `rt.removeEntity(id)`
 (mesh + body + collider + entité, émet `destroy`) · `rt.explodeAt(point, radius, damage,
@@ -207,6 +208,12 @@ const hit = rt.raycast(o, d, 120);   // raycast Rapier — EXCLUT la capsule du 
 if (hit?.entity && hit.entity.id !== 'player')
   rt.bus.emit('damage', hit.entity.id, { other: 'player', amount: 30, point: hit.point });
 ```
+
+**Convention visée** (yaw/pitch → direction monde) : depuis `yaw`/`pitch` de
+`playerState()`, `lookDir = (−sin(yaw)·cos(pitch), sin(pitch), −cos(yaw)·cos(pitch))`
+(yaw 0 = −Z, pitch > 0 = lever) — validée fin de bout en bout (calibration `aimAt`/`look`
++ tirs réels, Game #6). L'état de visée s'écrit par `rt.setLook`/`_debug.aimAt` et se lit
+par `playerState()` (convention n°4 — ne jamais dupliquer yaw/pitch dans le jeu).
 
 **Objets du monde possédés par le jeu** (sol, murs, porte, grille — sans entité ECS) :
 `rt.world` (Rapier) + `rt.scene` (Three.js) : `RAPIER.ColliderDesc` +
@@ -419,7 +426,8 @@ sync mesh/caméra + `onTick` + `tick++` + `time += 1/60`. API : `GameLoom.pause(
 | `zones()` (v0.2) | `{ id, x1, x2, z1, z2, inside: string[] }[]` (les zones `createZone`, entités à l'intérieur) |
 | `version` | `"0.2.0"` |
 
-**14 méthodes + `version` + `_debug`.**
+**14 méthodes + `version` + `_debug`.** `health` dans `snapshot()`/`entities()` = chaîne
+`"current/max"` (ex. `"100/100"`), **pas un nombre**.
 
 ### `GameLoom._debug` — API de dev/test **NON STABLE** ⚠️ (peut changer sans préavis ; développer/tester, pas gameplay produit)
 

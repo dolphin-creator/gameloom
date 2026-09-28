@@ -1163,3 +1163,24 @@ un viewport OU une image — aucun chemin de code commun non nécessaire). Candi
 = erreur locale sur sa carte. Validé sur les 3 GLB ammo (preuve navigateur : 1 page,
 3 viewports, orbit indépendant, sélection A→B, INSPECT, retour) + 3 images ; harness
 étendu S10–S12 (`test:viewer`, 67/67). Core / jeux / 3 ammo GLB inchangés.
+
+---
+
+## Audio dans l'Asset Viewer — abstraction validée (2026-09-28)
+
+**Observation** : le support audio (mono `?asset=.ogg` + Choice Mode) s'ajoute **sans
+aucune abstraction nouvelle** — un candidat = son renderer par kind (Three.js / `<img>` /
+`<audio controls>`), et le contrat de choix (CHOOSE → `&selected=` + `gameloom:choice`
+`{selected,index,type}`) et l'erreur locale par carte sont déjà kind-agnostiques :
+`type="audio"` découle de `kind` sans code dédié. Seule friction réelle : le mode mono
+créait le `WebGLRenderer` **avant** de connaître le type d'asset → détection `kindOf`
+en tête de module ; un asset audio ne crée alors **aucun** context WebGL (0 canvas).
+Single active audio (lancer B met A en pause) = 1 listener `play` par carte. Validé en
+navigateur : mono WAV (lecture/pause/durée/volume/zéro canvas), choice 3 WAV, candidat
+invalide = erreur locale, mix GLB+image+audio sur 1 page (harness S13–S17, fixtures WAV
+synthétisés Node pur en RIFF/PCM dans `dist/` — jamais dans `assets/`).
+
+**Décision** : pas de système audio séparé, pas de matrice de formats, pas de Web Audio,
+pas de nouvelle dépendance — `<audio>` natif suffit pour l'inspection ; formats
+contractuels = MP3/OGG/WAV (toute extension supplémentaire passe par le même `kindOf`).
+Core / jeux / contrats GLB-image inchangés.

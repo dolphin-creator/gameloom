@@ -1,9 +1,10 @@
-// GameLoom Asset Viewer v0.2 — outil d'inspection GLB (hors runtime) + HUMAN CHOICE.
+// GameLoom Asset Viewer v0.2 — outil d'inspection GLB/images/audio (hors runtime) + HUMAN CHOICE.
 //
 // Deux modes sur la même page viewer.html :
-//   • mono-asset (contrat inchangé) : ?asset=/assets/foo.glb
+//   • mono-asset (contrat uniforme par extension) : ?asset=/assets/foo.glb (GLB)
+//     · ?asset=/images/foo.png (image) · ?asset=/sounds/foo.ogg (audio)
 //   • HUMAN CHOICE : ?choice=/assets/a.glb,/assets/b.glb,/assets/c.glb
-//     (GLB et/ou images PNG/JPG/JPEG/WebP ; sélection mémorisée dans &selected=<URI>)
+//     (GLB, images PNG/JPG/JPEG/WebP, audio MP3/OGG/WAV ; sélection mémorisée dans &selected=<URI>)
 //
 // Le Choice Mode n'affiche que des candidats et n'enregistre qu'une sélection dans
 // l'URL : il ne déplace/modifie AUCUN fichier ni GLB, n'écrit aucune metadata,
@@ -82,6 +83,28 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ---------- détection du type d'asset par extension (partagé mono-asset / choice) ----------
+const IMG_EXT: Record<string, string> = { '.png': 'PNG', '.jpg': 'JPEG', '.jpeg': 'JPEG', '.webp': 'WebP' };
+const AUDIO_EXT: Record<string, string> = { '.mp3': 'MP3', '.ogg': 'OGG', '.wav': 'WAV' };
+
+function kindOf(uri: string): 'glb' | 'image' | 'audio' | 'unknown' {
+  const lower = uri.split(/[?#]/)[0].toLowerCase();
+  if (lower.endsWith('.glb')) return 'glb';
+  for (const e of Object.keys(IMG_EXT)) if (lower.endsWith(e)) return 'image';
+  for (const e of Object.keys(AUDIO_EXT)) if (lower.endsWith(e)) return 'audio';
+  return 'unknown';
+}
+
+function nameOf(uri: string): string {
+  const clean = uri.split(/[?#]/)[0];
+  return clean.split('/').pop() || uri;
+}
+
+function audioFormat(uri: string): string {
+  const clean = uri.split(/[?#]/)[0].toLowerCase();
+  return AUDIO_EXT['.' + (clean.split('.').pop() ?? '')] ?? 'audio';
+}
+
 // ---------- overlay collider (visuel — géométries Three.js, pas de Rapier) ----------
 function buildColliderOverlay(type: string, size: number[], center: number[]): THREE.Group {
   const g = new THREE.Group();
@@ -148,6 +171,220 @@ function computeGlbInfo(uri: string, gltf: GLTF, box: THREE.Box3, metadata: Reco
 }
 
 if (MODE === 'single') {
+const singleUri = bootParams.get('asset') ?? '';
+if (singleUri && kindOf(singleUri) === 'audio') {
+// ---------- mono-asset AUDIO (?asset=.mp3/.ogg/.wav) — <audio> natif, ZÉRO Three.js ----------
+// Aucun WebGLRenderer, aucune scène, aucun canvas : un asset audio s'inspecte en DOM pur
+// (lecteur natif = Play/Pause/position/volume). Même contrat d'URI que le GLB.
+const S = {
+  assetUri: singleUri,
+  loaded: false,
+  error: '',
+  duration: 0,
+  format: audioFormat(singleUri),
+};
+
+const statusEl = document.getElementById('status') as HTMLElement;
+const setStatus = (msg: string, kind: '' | 'ok' | 'err' = '') => {
+  statusEl.textContent = msg;
+  statusEl.className = kind;
+};
+const $v = (id: string) => document.getElementById(id) as HTMLElement;
+
+const panel = document.getElementById('panel') as HTMLElement;
+panel.innerHTML = `
+  <h1>GAMELOOM ASSET VIEWER</h1>
+  <div class="muted">inspection uniquement — pas un éditeur</div>
+  <h2>Asset</h2>
+  ${kvRow('URI', escapeHtml(singleUri))}
+  ${kvRow('nom', escapeHtml(nameOf(singleUri)))}
+  <div class="kv"><span class="k">type</span><span class="v">audio</span></div>
+  ${kvRow('format', S.format)}
+  <div class="kv"><span class="k">état</span><span class="v" id="v-state">en attente</span></div>
+  <div class="kv"><span class="k">durée</span><span class="v" id="v-duration">—</span></div>
+`;
+
+const viewport = document.getElementById('viewport') as HTMLElement;
+const stage = document.createElement('div');
+stage.className = 'audio-stage';
+const audioEl = document.createElement('audio');
+audioEl.controls = true;
+audioEl.src = singleUri;
+stage.appendChild(audioEl);
+viewport.appendChild(stage);
+setStatus('Chargement…');
+
+const fmtDur = (d: number) => (Number.isFinite(d) && d > 0 ? `${d.toFixed(2)} s` : '—');
+audioEl.addEventListener('loadedmetadata', () => {
+  S.loaded = true;
+  S.duration = audioEl.duration;
+  $v('v-duration').textContent = fmtDur(S.duration);
+  $v('v-state').textContent = 'chargé';
+  setStatus(`Chargé: ${nameOf(singleUri)} · ${S.format} · ${fmtDur(S.duration)}`, 'ok');
+});
+audioEl.addEventListener('error', () => {
+  S.error = `erreur chargement audio (code ${audioEl.error?.code ?? 0}) — ${singleUri}`;
+  $v('v-state').textContent = 'erreur';
+  setStatus(`Erreur: ${S.error}`, 'err');
+});
+
+const glbOnly: R = { ok: false, error: 'asset audio — méthode GLB uniquement' };
+const api = {
+  version: '0.2.0',
+
+  mode(): R { return { mode: 'single' }; },
+
+  asset(): R {
+    return { uri: S.assetUri || null, loaded: S.loaded, error: S.error || null };
+  },
+
+  info(): R {
+    if (!S.loaded) return { loaded: false, uri: S.assetUri || null, error: S.error || null };
+    return { uri: S.assetUri, loaded: true, type: 'audio', format: S.format, duration: S.duration, error: null };
+  },
+
+  animations(): R[] { return []; },
+
+  getState(): R {
+    return {
+      kind: 'audio',
+      playing: !audioEl.paused && !audioEl.ended,
+      time: +audioEl.currentTime.toFixed(3),
+      duration: S.duration,
+      volume: audioEl.volume,
+    };
+  },
+
+  playAudio(): R { void audioEl.play().catch(() => { }); return { ok: true }; },
+
+  pauseAudio(): R { audioEl.pause(); return { ok: true }; },
+
+  setVolume(v: number): R {
+    if (!Number.isFinite(v)) return { ok: false, error: 'volume invalide' };
+    audioEl.volume = Math.min(1, Math.max(0, v));
+    return { ok: true, volume: audioEl.volume };
+  },
+
+  // méthodes GLB : surfaces sûres inappliquables à un asset audio (jamais d'exception)
+  playAnimation(): R { return { ...glbOnly }; },
+  pauseAnimation(): R { return { ...glbOnly }; },
+  stopAnimation(): R { return { ...glbOnly }; },
+  setAnimationTime(): R { return { ...glbOnly }; },
+  setAnimationSpeed(): R { return { ...glbOnly }; },
+  setMeshVisible(): R { return { ...glbOnly }; },
+  setMaterialsVisible(): R { return { ...glbOnly }; },
+  setWireframe(): R { return { ...glbOnly }; },
+  setColliderVisible(): R { return { ...glbOnly }; },
+  setBoundingBoxVisible(): R { return { ...glbOnly }; },
+  setSkeletonVisible(): R { return { ...glbOnly }; },
+  setGridVisible(): R { return { ...glbOnly }; },
+  setAxesVisible(): R { return { ...glbOnly }; },
+};
+
+// Exposé AVANT tout chargement (même pattern que le GLB) : asset().loaded devient true
+// une fois les métadonnées lues.
+(window as unknown as { GameLoomViewer: typeof api }).GameLoomViewer = api;
+} else if (singleUri && kindOf(singleUri) === 'image') {
+// ---------- mono-asset IMAGE (?asset=.png/.jpg/.jpeg/.webp) — <img> natif, ZÉRO Three.js ----------
+// Même DOM-only que les cartes images du Choice Mode : aperçu centré (ratio conservé),
+// aucun WebGLRenderer, aucun canvas. Contrat d'URI identique au GLB.
+const S = {
+  assetUri: singleUri,
+  loaded: false,
+  error: '',
+  width: 0,
+  height: 0,
+  format: '',
+};
+
+const statusEl = document.getElementById('status') as HTMLElement;
+const setStatus = (msg: string, kind: '' | 'ok' | 'err' = '') => {
+  statusEl.textContent = msg;
+  statusEl.className = kind;
+};
+const $v = (id: string) => document.getElementById(id) as HTMLElement;
+
+const panel = document.getElementById('panel') as HTMLElement;
+panel.innerHTML = `
+  <h1>GAMELOOM ASSET VIEWER</h1>
+  <div class="muted">inspection uniquement — pas un éditeur</div>
+  <h2>Asset</h2>
+  ${kvRow('URI', escapeHtml(singleUri))}
+  ${kvRow('nom', escapeHtml(nameOf(singleUri)))}
+  <div class="kv"><span class="k">type</span><span class="v">image</span></div>
+  <div class="kv"><span class="k">format</span><span class="v" id="v-format">—</span></div>
+  <div class="kv"><span class="k">état</span><span class="v" id="v-state">en attente</span></div>
+  <div class="kv"><span class="k">dimensions</span><span class="v" id="v-dims">—</span></div>
+`;
+
+const viewport = document.getElementById('viewport') as HTMLElement;
+const stage = document.createElement('div');
+stage.className = 'img-stage';
+const imgEl = document.createElement('img');
+imgEl.alt = nameOf(singleUri);
+imgEl.src = singleUri;
+stage.appendChild(imgEl);
+viewport.appendChild(stage);
+setStatus('Chargement…');
+
+imgEl.onload = () => {
+  S.loaded = true;
+  S.width = imgEl.naturalWidth;
+  S.height = imgEl.naturalHeight;
+  const ext = singleUri.split(/[?#]/)[0].toLowerCase().split('.').pop() ?? '';
+  S.format = IMG_EXT['.' + ext] ?? (ext.toUpperCase() || 'image');
+  $v('v-format').textContent = S.format;
+  $v('v-dims').textContent = `${S.width} × ${S.height} px`;
+  $v('v-state').textContent = 'chargé';
+  setStatus(`Chargé: ${nameOf(singleUri)} · ${S.format} · ${S.width}×${S.height} px`, 'ok');
+};
+imgEl.onerror = () => {
+  S.error = `erreur chargement image — ${singleUri}`;
+  $v('v-state').textContent = 'erreur';
+  setStatus(`Erreur: ${S.error}`, 'err');
+};
+
+const glbOnly: R = { ok: false, error: 'asset image — méthode GLB uniquement' };
+const api = {
+  version: '0.2.0',
+
+  mode(): R { return { mode: 'single' }; },
+
+  asset(): R {
+    return { uri: S.assetUri || null, loaded: S.loaded, error: S.error || null };
+  },
+
+  info(): R {
+    if (!S.loaded) return { loaded: false, uri: S.assetUri || null, error: S.error || null };
+    return { uri: S.assetUri, loaded: true, type: 'image', format: S.format, width: S.width, height: S.height, error: null };
+  },
+
+  animations(): R[] { return []; },
+
+  getState(): R {
+    return { kind: 'image', width: S.width, height: S.height };
+  },
+
+  // méthodes GLB : surfaces sûres inapplicables à une image (jamais d'exception)
+  playAnimation(): R { return { ...glbOnly }; },
+  pauseAnimation(): R { return { ...glbOnly }; },
+  stopAnimation(): R { return { ...glbOnly }; },
+  setAnimationTime(): R { return { ...glbOnly }; },
+  setAnimationSpeed(): R { return { ...glbOnly }; },
+  setMeshVisible(): R { return { ...glbOnly }; },
+  setMaterialsVisible(): R { return { ...glbOnly }; },
+  setWireframe(): R { return { ...glbOnly }; },
+  setColliderVisible(): R { return { ...glbOnly }; },
+  setBoundingBoxVisible(): R { return { ...glbOnly }; },
+  setSkeletonVisible(): R { return { ...glbOnly }; },
+  setGridVisible(): R { return { ...glbOnly }; },
+  setAxesVisible(): R { return { ...glbOnly }; },
+};
+
+// Exposé AVANT tout chargement (même pattern que le GLB) : asset().loaded devient true
+// une fois l'image chargée (onload).
+(window as unknown as { GameLoomViewer: typeof api }).GameLoomViewer = api;
+} else {
 type ViewerInfo = GlbInfo & { loaded: boolean };
 
 // ---------- état ----------
@@ -733,6 +970,7 @@ renderPanels();
 const initial = urlParam('asset');
 if (initial) void loadAsset(initial);
 else setStatus('Aucun asset — ouvrir ?asset=/assets/mon_asset.glb');
+}
 } else {
 // ---------- HUMAN CHOICE MODE ----------
 // Plusieurs candidats sur UNE SEULE PAGE. Chaque GLB = viewport Three.js indépendant
@@ -745,23 +983,9 @@ const choiceList: string[] = (bootParams.get('choice') ?? '')
   .map((s) => s.trim())
   .filter((s) => s.length > 0);
 
-const IMG_EXT: Record<string, string> = { '.png': 'PNG', '.jpg': 'JPEG', '.jpeg': 'JPEG', '.webp': 'WebP' };
-
-function kindOf(uri: string): 'glb' | 'image' | 'unknown' {
-  const lower = uri.toLowerCase();
-  if (lower.endsWith('.glb')) return 'glb';
-  for (const e of Object.keys(IMG_EXT)) if (lower.endsWith(e)) return 'image';
-  return 'unknown';
-}
-
-function nameOf(uri: string): string {
-  const clean = uri.split(/[?#]/)[0];
-  return clean.split('/').pop() || uri;
-}
-
 type Cand = {
   uri: string;
-  kind: 'glb' | 'image' | 'unknown';
+  kind: 'glb' | 'image' | 'audio' | 'unknown';
   name: string;
   loaded: boolean;
   error: string;
@@ -777,6 +1001,9 @@ type Cand = {
   width?: number;
   height?: number;
   format?: string;
+  // audio
+  duration?: number;
+  audioEl?: HTMLAudioElement;
 };
 
 const cands: Cand[] = choiceList.map((uri) => ({
@@ -846,6 +1073,13 @@ function renderImageMeta(c: Cand, metaEl: HTMLElement) {
   metaEl.innerHTML = [
     kvRow('format', c.format ?? '—'),
     kvRow('dimensions', c.width != null && c.height != null ? `${c.width} × ${c.height} px` : '—'),
+  ].join('');
+}
+
+function renderAudioMeta(c: Cand, metaEl: HTMLElement) {
+  metaEl.innerHTML = [
+    kvRow('format', c.format ?? '—'),
+    kvRow('durée', c.duration != null && Number.isFinite(c.duration) && c.duration > 0 ? `${c.duration.toFixed(2)} s` : '—'),
   ].join('');
 }
 
@@ -944,7 +1178,7 @@ function resizeCand(c: Cand) {
 function makeCard(c: Cand, idx: number): HTMLElement {
   const card = document.createElement('section');
   card.className = 'card';
-  const kindLabel = c.kind === 'glb' ? 'GLB' : c.kind === 'image' ? 'image' : 'type inconnu';
+  const kindLabel = c.kind === 'glb' ? 'GLB' : c.kind === 'image' ? 'image' : c.kind === 'audio' ? 'audio' : 'type inconnu';
   card.innerHTML = `
     <div class="card-head">
       <div class="card-title"><span class="sel-badge">CHOISI</span><strong>${escapeHtml(c.name)}</strong></div>
@@ -986,8 +1220,32 @@ function makeCard(c: Cand, idx: number): HTMLElement {
     vp.className = 'card-vp';
     body.appendChild(vp);
     void loadGlbCandidate(c, vp, metaEl);
+  } else if (c.kind === 'audio') {
+    const wrap = document.createElement('div');
+    wrap.className = 'card-audio';
+    const el = document.createElement('audio');
+    el.controls = true;
+    el.src = c.uri;
+    wrap.appendChild(el);
+    body.appendChild(wrap);
+    c.audioEl = el;
+    c.format = audioFormat(c.uri);
+    el.addEventListener('loadedmetadata', () => {
+      c.duration = Number.isFinite(el.duration) ? el.duration : 0;
+      c.loaded = true;
+      renderAudioMeta(c, metaEl);
+    });
+    el.addEventListener('error', () => {
+      c.error = `erreur chargement audio (code ${el.error?.code ?? 0}) — ${c.uri}`;
+      c.loaded = false;
+      renderCardError(c, metaEl);
+    });
+    el.addEventListener('play', () => {
+      // single active audio : lancer une carte met les autres en pause
+      for (const o of cands) if (o !== c && o.audioEl) o.audioEl.pause();
+    });
   } else {
-    c.error = 'type non supporté (GLB ou PNG/JPG/JPEG/WebP)';
+    c.error = 'type non supporté (GLB, PNG/JPG/JPEG/WebP, ou MP3/OGG/WAV)';
     renderCardError(c, metaEl);
   }
 
@@ -1031,6 +1289,10 @@ const api = {
         base.height = c.height ?? null;
       } else if (c.kind === 'glb' && c.info) {
         base.info = c.info;
+      } else if (c.kind === 'audio') {
+        base.format = c.format ?? null;
+        base.duration = c.duration != null && Number.isFinite(c.duration) ? c.duration : null;
+        base.playing = !!c.audioEl && !c.audioEl.paused && !c.audioEl.ended;
       }
       return base;
     });

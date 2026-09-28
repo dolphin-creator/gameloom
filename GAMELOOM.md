@@ -576,11 +576,12 @@ Non implémenté en v0.2 — ne pas inventer d'API :
 - **Pathfinding / navigation mesh** — `avoidObstacles` ne fait que clamping le step avant
   les obstacles (raycast) ; pas d'évitement ni de replanification.
 
-## 18. Asset Viewer (outil d'inspection GLB)
+## 18. Asset Viewer (outil d'inspection GLB / images / audio)
 
 Le viewer est un **outil**, pas un jeu ni un éditeur : un agent charge un asset par URI et
-donne à l'humain une URL pour l'inspecter visuellement — **mono-asset** (`?asset=`, GLB) ou
-**HUMAN CHOICE** (`?choice=`, plusieurs GLB et/ou images en simultané sur UNE page, §18.1).
+donne à l'humain une URL pour l'inspecter — **mono-asset** (`?asset=`, GLB, image
+PNG/JPG/JPEG/WebP, ou audio MP3/OGG/WAV) ou **HUMAN CHOICE** (`?choice=`, GLB / images /
+audio, mélange autorisé, sur UNE page, §18.1).
 Hors runtime — **aucun** import du core ; le viewer lit le GLB + l'extension
 `com.gameloom.v0` par lui-même, le collider est un overlay géométrique Three.js (PAS un
 body Rapier).
@@ -589,17 +590,20 @@ body Rapier).
 npm run build && cp assets/*.glb dist/assets/        # 1. build (comme les jeux)
 npm run viewer -- --host 127.0.0.1 --port 5174      # 2. viewer sur 127.0.0.1:5174
 # → http://127.0.0.1:5174/viewer.html?asset=/assets/guardian.glb
+# → http://127.0.0.1:5174/viewer.html?asset=/images/concept.png           (image)
+# → http://127.0.0.1:5174/viewer.html?asset=/sounds/shot.ogg            (audio)
 # → http://127.0.0.1:5174/viewer.html?choice=/assets/a.glb,/assets/b.glb,/assets/c.glb
+# → http://127.0.0.1:5174/viewer.html?choice=/sounds/a.ogg,/sounds/b.ogg,/sounds/c.ogg
 ```
 
 - **Host/port** : défauts `127.0.0.1:5174`, **overrideables**
   (`npm run viewer -- --host 0.0.0.0 --port 8080`, ou tout sous-ensemble) ; `vite preview`
   sert le build. GameLoom ne devine ni n'ouvre rien : exposition réseau (proxy inverse,
   VPS, Tailscale…) = infrastructure extérieure, aucune logique réseau dans le repo.
-- **URI = contrat asset** : `?asset=/assets/foo.glb` (mono-asset) ou
-  `?choice=/assets/a.glb,/assets/b.glb,…` (Choice Mode — liste séparée par des virgules,
-  sans manifeste, sans liste codée en dur) ; relative à l'origine du serveur — compatible
-  reverse proxy / chemin distant ; **aucun** état serveur.
+- **URI = contrat asset** : `?asset=<URI>` (mono-asset — GLB, image, ou audio, dispatch
+  par extension) ou `?choice=/assets/a.glb,/assets/b.glb,…` (Choice Mode — liste séparée
+  par des virgules, sans manifeste, sans liste codée en dur) ; relative à l'origine du
+  serveur — compatible reverse proxy / chemin distant ; **aucun** état serveur.
 - **GLB régénéré pendant que le viewer tourne** : pas de redémarrage du serveur —
   `vite preview` ressert le fichier depuis `dist/` à chaque requête (copier le GLB
   régénéré dans `dist/assets/` et recharger la page suffit). Si le navigateur garde
@@ -615,6 +619,10 @@ npm run viewer -- --host 127.0.0.1 --port 5174      # 2. viewer sur 127.0.0.1:51
   rig détecté), grille, axes.
 - **Animations GLTF** : liste nom + durée, Play/Pause/Stop, loop, vitesse, timeline
   (`AnimationMixer` Three.js — aucune logique de gameplay nécessaire).
+- **Audio / images mono** : `?asset=` accepte aussi l'audio (MP3/OGG/WAV — lecteur natif
+  `<audio controls>` : Play/Pause/position/volume + durée) et les images (PNG/JPG/JPEG/
+  WebP — aperçu centré, ratio conservé, format + dimensions) — **zéro Three.js** (aucun
+  WebGLRenderer, aucun canvas) pour ces types, comme les cartes images du Choice Mode.
 - **Panneau** : infos GLB (scènes/meshes/vertices/triangles/matériaux/textures/animations/
   skinned meshes/bones/bbox) + metadata `com.gameloom.v0` réelles (collider, physics,
   components — rien d'inventé).
@@ -626,8 +634,11 @@ l'humain compare et choisisse avant que l'agent agisse. **GLB** : viewport Three
 indépendant par candidat (OrbitControls, auto-framing, matériaux/textures) + metadata
 (meshes, triangles, matériaux, animations, rig OUI/NON, bbox, capacités). **Images
 PNG/JPG/JPEG/WebP** : aperçu simultané + nom/URI/format/dimensions — **pas de Three.js**
-pour une image. Mélange GLB + images autorisé ; type non supporté ou fichier invalide =
-erreur **locale** sur cette carte (les autres candidats restent opérationnels).
+pour une image. **Audio MP3/OGG/WAV** : lecteur natif `<audio controls>` par candidat
+(Play/Pause/position/volume) + nom/URI/format/durée — **pas de Three.js** ; **un seul
+audio actif** (lancer une carte met les autres en pause). Mélange GLB + images + audio
+autorisé ; type non supporté ou fichier invalide = erreur **locale** sur cette carte
+(les autres candidats restent opérationnels).
 
 Chaque carte : **INSPECT** (→ viewer mono-asset existant `?asset=<URI>`) et **CHOOSE**.
 CHOOSE n'enregistre **que** la sélection humaine dans l'URL (`&selected=<URI>` — une URL
@@ -641,7 +652,7 @@ responsable de ce qu'il fait du choix ensuite. Le candidat sélectionné est vis
 `window.addEventListener("gameloom:choice", handler)` — émis à chaque sélection (bouton
 CHOOSE ou `GameLoomViewer.selectChoice`), après la mise à jour de l'état/URL ;
 `event.detail.selected` contient l'URI choisie (`detail` strictement JSON-sérialisable :
-`selected`, `index`, `type`).
+`selected`, `index`, `type` — `type` = kind du candidat : `glb`/`image`/`audio`).
 
 The viewer does not communicate with a specific agent framework. An external agent/browser
 harness may observe the choice through the pull API, the browser event, polling, CDP, or
@@ -658,14 +669,15 @@ sont pas exposées dans l'autre :
 | Méthode | Rôle |
 |---|---|
 | `mode()` | `{ mode: "single" \| "choice" }` |
-| `info()` | (single) stats complètes : `uri, loaded, scenes, meshes, vertices, triangles, materials, textures, animations[{name,duration}], skinnedMeshes, bones, rigDetected, bbox{min,max,size}, metadata (ou null)` |
+| `info()` | (single) stats complètes : `uri, loaded, scenes, meshes, vertices, triangles, materials, textures, animations[{name,duration}], skinnedMeshes, bones, rigDetected, bbox{min,max,size}, metadata (ou null)` · **audio** → `{ uri, loaded, type:"audio", format, duration, error }` · **image** → `{ uri, loaded, type:"image", format, width, height, error }` |
 | `asset()` | (single) `{ uri, loaded, error }` |
-| `animations()` | (single) `[{ name, duration, selected, playing, time }]` |
+| `playAudio()` / `pauseAudio()` / `setVolume(v)` | (single, **audio**) lecture/pause/volume du lecteur natif → `{ ok, volume? }` (sur un GLB → `{ ok:false, error }`) |
+| `animations()` | (single) `[{ name, duration, selected, playing, time }]` (audio → `[]`) |
 | `playAnimation(name?)` / `pauseAnimation()` / `stopAnimation()` | (single) lecture (nom absent = animation courante/première) |
 | `setAnimationTime(s)` / `setAnimationSpeed(v)` | (single) timeline / vitesse |
 | `setMeshVisible(b)` / `setMaterialsVisible(b)` / `setWireframe(b)` / `setColliderVisible(b)` / `setBoundingBoxVisible(b)` / `setSkeletonVisible(b)` / `setGridVisible(b)` / `setAxesVisible(b)` | (single) toggles (retour `{ ok, …état }`) |
-| `getState()` | (single) état complet des toggles + animation (JSON) |
-| `choices()` | (choice) `[{ uri, kind, name, loaded, error, … }]` — par candidat : GLB → `info` (stats ci-dessus) ; image → `format`, `width`, `height` |
+| `getState()` | (single) état complet des toggles + animation (JSON) · **audio** → `{ kind:"audio", playing, time, duration, volume }` · **image** → `{ kind:"image", width, height }` |
+| `choices()` | (choice) `[{ uri, kind, name, loaded, error, … }]` — par candidat : GLB → `info` (stats ci-dessus) ; image → `format`, `width`, `height` ; audio → `format`, `duration`, `playing` |
 | `getChoice()` | (choice) `{ selected }` — URI du choix humain, `null` avant tout choix |
 | `selectChoice(uri)` | (choice) enregistre la sélection → `{ ok: true, selected }` + `&selected=<URI>` dans l'URL ; URI inconnue → `{ ok: false, error }` (aucune mutation de projet) |
 

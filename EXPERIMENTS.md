@@ -1044,6 +1044,30 @@ Reason: les drifts étaient récurrents après chaque jeu et purement mécanique
 garde-fou minimal suffit — ni parser de Markdown général, ni auto-fix, ni nouvelle
 dépendance.
 
+### D014 — Asset Viewer = outil autonome : URI comme contrat, API JSON, zéro couplage core/infra
+Status: en vigueur (2026-09-28).
+Evidence: la mission « un agent charge un GLB par URI et donne une URL à l'humain » ne
+requiert ni moteur, ni éditeur, ni connaissance réseau. Le Three.js existant
+(`GLTFLoader`, `OrbitControls`, `AnimationMixer`, `SkeletonHelper`, `Box3Helper`) suffit —
+le collider GameLoom est une géométrie Three.js, PAS un body Rapier ; le core
+(Rapier/Miniplex/runtime) n'a rien à y voir. CORE_CHANGED = NO, aucun asset/jeu modifié.
+Decision: `viewer.html` + `src/viewer/` (imports uniquement `three`), servi par
+`vite preview` (host/port overrideables, défauts `127.0.0.1:5174`) ; **l'URI `?asset=`
+est le contrat** (aucune liste d'assets codée en dur) ; la méta `com.gameloom.v0` est lue
+du chunk JSON par le viewer lui-même (indépendance du core, même convention de lecture) ;
+état dans `URLSearchParams` + `history.replaceState` (une URL partagée = la vue montrée,
+contracte agent→humain) ; `window.GameLoomViewer` strictement JSON (aucun objet Three
+exposé, méthodes sûres sans asset) ; **aucune** intégration réseau/infrastructure (pas de
+Tailscale/Caddy/VPS/proxy, pas de détection d'adresse publique, pas de firewall) —
+l'exposition réseau est l'affaire de l'utilisateur ; le checker de cohérence exclut
+`viewer.html` du comptage de jeux (outil, comme `v02_test.html`) — les 7 jeux et les 8
+harnesses officiels restent intacts ; test via `test:viewer` (harness autonome, cycle de
+vie complet, ports 4180/9225) **hors** suite officielle.
+Reason: l'inspection 3D d'un prefab est un besoin d'outillage humain↔agent, pas de
+gameplay ; la séparation stricte garantit qu'aucune évolution du viewer ne peut toucher
+les jeux, et l'absence totale de logique réseau permet toute exposition arbitraire
+(réseau local, VPS, Tailscale, reverse proxy) sans modifier GameLoom.
+
 ---
 
 ## Open questions

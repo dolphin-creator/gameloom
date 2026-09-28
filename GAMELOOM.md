@@ -85,9 +85,10 @@ tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex der
 ├── GAMELOOM.md ← ce fichier · EXPERIMENTS.md ← mémoire d'ingénierie · JOURNAL.md ← archive
 ├── index/temple/ruins/dungeon/outpost/reactor/cargo.html ← shells des 7 jeux (canvas #game, HUD, overlays)
 │   · v02_test.html ← page de test des primitives core v0.2 (pas un jeu)
-├── package.json ← scripts : dev, build, preview, glb, check:consistency, test (orchestrateur),
-│   test:v02/headless/temple/ruins/dungeon/outpost/reactor/cargo
-├── tsconfig.json · vite.config.ts ← TS strict noEmit · multi-entry (8 HTML), base './'
+│   · viewer.html ← Asset Viewer : visualiseur d'inspection GLB (outil, pas un jeu — §19)
+├── package.json ← scripts : dev, build, preview, viewer, glb, check:consistency, test (orchestrateur),
+│   test:v02/headless/temple/ruins/dungeon/outpost/reactor/cargo, test:viewer (harness autonome §19)
+├── tsconfig.json · vite.config.ts ← TS strict noEmit · multi-entry (9 HTML), base './'
 ├── assets/ ← 14 GLB : barrel, crate, target, switch, guardian, artifact, ruins_column,
 │            dungeon_key, dungeon_mage, dungeon_spikes, survivor, reactor, socket, energy_cell
 ├── src/core/ ← LE CORE (types, ecs, events, actions, glbs, runtime, index) — modifier
@@ -97,10 +98,11 @@ tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex der
 │              outpost/main.ts (#5, zones + moveEntity core), reactor/main.ts (#6),
 │              cargo/main.ts (#7) · v02_test/main.ts (page debug)
 └── tools/    ← run_harnesses.mjs (ORCHESTRATEUR officiel, §15), cli.mjs (CLI `glb`),
-                check_consistency.mjs (CHECKER de cohérence mécanique, §4),
-                test_v02/headless/temple/ruins/dungeon/outpost/reactor/cargo.mjs (harness CDP 9224),
-                make_glb.mjs, diag_*.mjs (one-shots), blender/ (make_assets.py, make_ruins_assets.py,
-                make_dungeon_assets.py)
+                 check_consistency.mjs (CHECKER de cohérence mécanique, §4),
+                 test_v02/headless/temple/ruins/dungeon/outpost/reactor/cargo.mjs (harness CDP 9224),
+                 test_viewer.mjs (harness autonome du viewer — ports 4180/9225, hors suite officielle),
+                 make_glb.mjs, diag_*.mjs (one-shots), blender/ (make_assets.py, make_ruins_assets.py,
+                 make_dungeon_assets.py)
 ```
 
 `src/core/runtime.ts` = moteur (Rapier+KCC, tick, règles, actions core, mouvement/zones v0.2, debug API) ;
@@ -143,6 +145,7 @@ npm run preview                                      # 5. servir le build (http:
 #    · page debug v0.2: /v02_test.html
 node tools/run_harnesses.mjs --build                 # 6. tests OFFICIELS (build + preview + Chrome + 8 harnesses, §15)
 npm run glb -- inspect assets/barrel.glb             # 7. CLI glb (outillage asset)
+npm run viewer -- --host 127.0.0.1 --port 5174      # 8. Asset Viewer (outil d'inspection GLB — §19)
 ```
 
 - `npm run build` = `tsc --noEmit && vite build` ; chaque jeu = une entrée HTML dans `rollupOptions.input` (`vite.config.ts`, 8 entrées).
@@ -570,7 +573,8 @@ Non implémenté en v0.2 — ne pas inventer d'API :
 - **Alias metadata / versions multiples** — un seul namespace `com.gameloom.v0`.
 - **Audio dans le GLB** — audio synthétisé (Web Audio) dans le jeu.
 - **Inventory**, **quests génériques**, **save/load**, **multiplayer/réseau**.
-- **Animation / root-motion** — aucun asset animé ; pas de `AnimationMixer`.
+- **Animation / root-motion** — aucun asset animé ; le runtime n'anime pas les entités
+  (l'Asset Viewer, §19, lit les clips GLTF si un asset en contient — lecture, pas gameplay).
 - **Collider `convex`** — types seulement, non supporté au runtime.
 - **Scaling d'instance appliqué au collider** (§8).
 - **Events `wave.start / wave.clear / game.over / ammo.empty`** — cités dans `types.ts`, **jamais émis** ;
@@ -578,6 +582,60 @@ Non implémenté en v0.2 — ne pas inventer d'API :
 - **`collision.start`** — émis/loggué, aucune règle ne s'y abonne.
 - **Pathfinding / navigation mesh** — `avoidObstacles` ne fait que clamping le step avant
   les obstacles (raycast) ; pas d'évitement ni de replanification.
+
+## 19. Asset Viewer (outil d'inspection GLB)
+
+Le viewer est un **outil**, pas un jeu ni un éditeur : un agent charge un GLB par URI et
+donne à l'humain une URL pour l'inspecter visuellement. Hors runtime — **aucun** import du
+core (pas de Rapier, pas de Miniplex, pas de gameplay) ; le viewer lit le GLB + l'extension
+`com.gameloom.v0` par lui-même, et le collider est un overlay géométrique Three.js
+(PAS un body Rapier).
+
+```bash
+npm run build && cp assets/*.glb dist/assets/        # 1. build (comme les jeux)
+npm run viewer -- --host 127.0.0.1 --port 5174      # 2. viewer sur 127.0.0.1:5174
+# → http://127.0.0.1:5174/viewer.html?asset=/assets/guardian.glb
+```
+
+- **Host/port** : défauts `127.0.0.1:5174`, **overrideables** — `npm run viewer -- --host 0.0.0.0 --port 8080`
+  (ou n'importe quel sous-ensemble) ; `vite preview` sert le build. GameLoom ne devine ni
+  n'ouvre rien : exposition réseau (proxy inverse, VPS, Tailscale, réseau privé…) =
+  infrastructure extérieure, aucune logique réseau dans le repo.
+- **URI = contrat asset** : `?asset=/assets/foo.glb` (relative à l'origine du serveur —
+  compatible reverse proxy / chemin distant) ; aucune liste d'assets codée en dur.
+- **Options URL** (état réécrit via `history.replaceState` → une URL partagée décrit la vue) :
+  `&animation=<nom>` (sélection + lecture) · `&skeleton=1` · `&collider=1` · `&wireframe=1` ·
+  `&bbox=1` · `&grid=1` · `&axes=1` · `&mesh=0` · `&materials=0` · `&speed=2` · `&loop=0`.
+- **Affichage** : orbit/zoom/pan (OrbitControls) + auto-framing (bbox → centrage + distance
+  caméra) ; toggles : mesh, matériaux/textures (OFF = matériau neutre temporaire, ON
+  restaure les originaux), wireframe (réversible), bounding box, **collider GameLoom**
+  (box/sphere/capsule de la méta, overlay visuel), skeleton (`SkeletonHelper`, auto-on si rig
+  détecté), grille, axes.
+- **Animations GLTF** : liste nom + durée, Play/Pause/Stop, loop, vitesse, timeline
+  (`AnimationMixer` Three.js — aucune logique de gameplay nécessaire).
+- **Panneau** : infos GLB (scènes/meshes/vertices/triangles/matériaux/textures/animations/
+  skinned meshes/bones/bbox) + metadata `com.gameloom.v0` réelles (collider, physics,
+  components — rien d'inventé).
+
+### `window.GameLoomViewer` — API JSON pour agent/debug
+
+Tout retour est sérialisable en JSON (aucun objet Three.js exposé) ; les méthodes sont sûres
+sans asset chargé (retour `{ ok: false, error }` ou `{ loaded: false }` — jamais d'exception) :
+
+| Méthode | Rôle |
+|---|---|
+| `info()` | stats complètes : `uri, loaded, scenes, meshes, vertices, triangles, materials, textures, animations[{name,duration}], skinnedMeshes, bones, rigDetected, bbox{min,max,size}, metadata (ou null)` |
+| `asset()` | `{ uri, loaded, error }` |
+| `animations()` | `[{ name, duration, selected, playing, time }]` |
+| `playAnimation(name?)` / `pauseAnimation()` / `stopAnimation()` | lecture (nom absent = animation courante/première) |
+| `setAnimationTime(s)` / `setAnimationSpeed(v)` | timeline / vitesse |
+| `setMeshVisible(b)` / `setMaterialsVisible(b)` / `setWireframe(b)` / `setColliderVisible(b)` / `setBoundingBoxVisible(b)` / `setSkeletonVisible(b)` / `setGridVisible(b)` / `setAxesVisible(b)` | toggles (retour `{ ok, …état }`) |
+| `getState()` | état complet des toggles + animation (JSON) |
+
+**Frontière** : inspection uniquement — l'édition reste le CLI `glb` + Blender (collider,
+physics, components) ; le viewer ne modifie jamais un GLB. **Testé par `npm run test:viewer`**
+(harness autonome, cycle de vie complet, ports 4180/9225 — volontairement **hors** de la
+suite officielle des 8 harnesses jeux, §15).
 
 ---
 

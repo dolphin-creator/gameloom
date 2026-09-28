@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GameLoom Asset Viewer</title>
+  <style>
+    html, body { margin:0; height:100%; overflow:hidden; background:#0b0e13; color:#dbe4f0;
+      font-family:ui-monospace,'Cascadia Mono',Consolas,Menlo,monospace; font-size:13px; }
+    #app { display:flex; height:100%; }
+    #viewport { flex:1; position:relative; min-width:0; }
+    #viewport canvas { display:block; width:100%; height:100%; }
+    #status { position:absolute; left:10px; bottom:10px; background:rgba(10,14,20,.85);
+      border:1px solid #232b38; border-radius:4px; padding:6px 10px; font-size:12px; max-width:70%; pointer-events:none; }
+    #status.err { border-color:#7a3b46; color:#ff9aa8; }
+    #status.ok { color:#8fe3a8; }
+    #panel { width:340px; min-width:280px; overflow-y:auto; background:#0f141c;
+      border-left:1px solid #232b38; box-sizing:border-box; padding:14px 16px 40px; }
+    h1 { font-size:13px; letter-spacing:1.5px; margin:0 0 4px; color:#8fa5c4; }
+    h2 { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:#5f7396;
+      margin:18px 0 8px; border-bottom:1px solid #1c2433; padding-bottom:4px; }
+    .kv { display:flex; justify-content:space-between; gap:8px; padding:1px 0; line-height:1.5; }
+    .kv .k { color:#7d92b3; flex-shrink:0; }
+    .kv .v { color:#dbe4f0; text-align:right; word-break:break-all; }
+    .chk { display:flex; align-items:center; gap:8px; padding:3px 0; cursor:pointer; user-select:none; }
+    .chk input { accent-color:#4fd1ff; margin:0; }
+    .muted { color:#5f7396; line-height:1.5; }
+    .meta { white-space:pre-wrap; word-break:break-word; line-height:1.55; color:#c3d2e8; font-size:12px; }
+    button { background:#1a2332; color:#dbe4f0; border:1px solid #2c3a52; border-radius:4px;
+      padding:4px 0; font:inherit; cursor:pointer; }
+    button:hover { background:#233048; }
+    button.on { background:#173a52; border-color:#2b6a94; color:#bfe6ff; }
+    select { width:100%; box-sizing:border-box; background:#131a25; color:#dbe4f0;
+      border:1px solid #2c3a52; border-radius:4px; padding:4px; font:inherit; }
+    input[type=range] { width:100%; accent-color:#4fd1ff; }
+    .row { display:flex; gap:6px; align-items:center; margin-top:8px; }
+    .row button { flex:1; }
+    .rowlabel { display:flex; justify-content:space-between; margin-top:8px; color:#7d92b3; font-size:12px; }
+    .rowlabel span:last-child { color:#dbe4f0; }
+    @media (max-width: 820px) {
+      #app { flex-direction:column; }
+      #panel { width:100%; max-height:45%; border-left:none; border-top:1px solid #232b38; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="viewport"><div id="status"></div></div>
+    <aside id="panel">
+      <h1>GAMELOOM ASSET VIEWER</h1>
+      <div class="muted">inspection uniquement — pas un éditeur</div>
+
+      <h2>Asset</h2>
+      <div class="kv"><span class="k">URI</span><span class="v" id="v-uri">—</span></div>
+      <div class="kv"><span class="k">état</span><span class="v" id="v-state">en attente</span></div>
+
+      <h2>GLB</h2>
+      <div id="sec-glb"><span class="muted">—</span></div>
+
+      <h2>GameLoom metadata</h2>
+      <div id="sec-meta" class="meta">—</div>
+
+      <h2>Display</h2>
+      <label class="chk"><input type="checkbox" id="chk-mesh" checked>Mesh</label>
+      <label class="chk"><input type="checkbox" id="chk-materials" checked>Materials / textures</label>
+      <label class="chk"><input type="checkbox" id="chk-wireframe">Wireframe</label>
+      <label class="chk"><input type="checkbox" id="chk-bbox">Bounding box</label>
+      <label class="chk"><input type="checkbox" id="chk-collider" checked>Collider GameLoom</label>
+      <label class="chk"><input type="checkbox" id="chk-grid" checked>Grid</label>
+      <label class="chk"><input type="checkbox" id="chk-axes">Axes</label>
+      <label class="chk"><input type="checkbox" id="chk-skeleton">Skeleton</label>
+
+      <h2>Rig</h2>
+      <div id="sec-rig"><span class="muted">—</span></div>
+
+      <h2>Animations</h2>
+      <div id="sec-anim"><span class="muted">—</span></div>
+    </aside>
+  </div>
+  <script type="module" src="/src/viewer/main.ts"></script>
+</body>
+</html>

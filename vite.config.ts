@@ -23,6 +23,7 @@ export default defineConfig({
         'reactor.html': 'reactor.html',
         'cargo.html': 'cargo.html',
         'v02_test.html': 'v02_test.html',
+        'viewer.html': 'viewer.html',
       },
     },
   },

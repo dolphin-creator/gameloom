@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "viewer": "vite preview --host 127.0.0.1 --port 5174",
     "glb": "node tools/cli.mjs",
     "check:consistency": "node tools/check_consistency.mjs",
     "test": "node tools/check_consistency.mjs && node tools/run_harnesses.mjs --build",
@@ -17,7 +18,8 @@
     "test:dungeon": "node tools/test_dungeon.mjs",
     "test:outpost": "node tools/test_outpost.mjs",
     "test:reactor": "node tools/test_reactor.mjs",
-    "test:cargo": "node tools/test_cargo.mjs"
+    "test:cargo": "node tools/test_cargo.mjs",
+    "test:viewer": "node tools/test_viewer.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

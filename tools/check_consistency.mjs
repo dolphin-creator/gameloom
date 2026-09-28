@@ -70,7 +70,7 @@ else if (gIssues.length) bad('GLB inventory: ' + realGlbs.length, gIssues);
 else ok('GLB inventory: ' + realGlbs.length + ' (table = assets/)');
 
 // ---------- 6. claims mécaniques GAMELOOM.md (phrases stables, pas un parser de Markdown) ----------
-const gameCount = entries.filter((e) => e !== 'v02_test.html').length; // v02_test = page debug, pas un jeu
+const gameCount = entries.filter((e) => e !== 'v02_test.html' && e !== 'viewer.html').length; // v02_test = page debug, viewer.html = outil d'inspection — pas des jeux
 let claimsOk = 0;
 const claim = (label, re, expected) => {
   const m = doc.match(re);

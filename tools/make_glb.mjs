@@ -44,6 +44,10 @@ const MAT_GOLD = { name: 'Gold', pbrMetallicRoughness: { baseColorFactor: [0.85,
 const MAT_VEST = { name: 'Vest', pbrMetallicRoughness: { baseColorFactor: [0.95, 0.65, 0.1, 1], metallicFactor: 0, roughnessFactor: 0.8 } };
 const MAT_BODYSUIT = { name: 'Bodysuit', pbrMetallicRoughness: { baseColorFactor: [0.3, 0.33, 0.4, 1], metallicFactor: 0, roughnessFactor: 0.85 } };
 const MAT_SKIN = { name: 'Skin', pbrMetallicRoughness: { baseColorFactor: [0.87, 0.7, 0.55, 1], metallicFactor: 0, roughnessFactor: 0.7 } };
+const MAT_CELL = { name: 'Cell', pbrMetallicRoughness: { baseColorFactor: [0.15, 0.85, 0.4, 1], metallicFactor: 0.1, roughnessFactor: 0.35 } };
+const MAT_CELL_DARK = { name: 'CellDark', pbrMetallicRoughness: { baseColorFactor: [0.09, 0.16, 0.2, 1], metallicFactor: 0.4, roughnessFactor: 0.6 } };
+const MAT_SOCKET = { name: 'Socket', pbrMetallicRoughness: { baseColorFactor: [0.32, 0.36, 0.42, 1], metallicFactor: 0.5, roughnessFactor: 0.55 } };
+const MAT_SOCKET_DARK = { name: 'SocketDark', pbrMetallicRoughness: { baseColorFactor: [0.16, 0.19, 0.23, 1], metallicFactor: 0.5, roughnessFactor: 0.5 } };
 
 // ---------- recettes d'assets (origine à la base: y=0 au sol, Y-up glTF) ----------
 const RECIPES = {
@@ -72,7 +76,25 @@ const RECIPES = {
       { geo: boxGeometry(1.3, 0.25, 1.3, 0, 0.25, 0), material: MAT_STONE },  // socle 2.6×0.5 → 0.5
       { geo: boxGeometry(0.85, 0.5, 0.85, 0, 1.0, 0), material: MAT_STONE },  // corps 1.7×1.0 → 1.5
       { geo: boxGeometry(1.0, 0.08, 1.0, 0, 1.63, 0), material: MAT_GOLD },   // bande → 1.71
-      { geo: boxGeometry(0.5, 0.5, 0.5, 0, 2.31, 0), material: MAT_STONE },   // colonne de tête → 2.81
+    { geo: boxGeometry(0.5, 0.5, 0.5, 0, 2.31, 0), material: MAT_STONE },  // colonne de tête → 2.81
+    ],
+  },
+  // Cellule d'énergie (~0.56 m): socle sombre + corps vert + capot (3 primitives, 1 mesh)
+  energy_cell: {
+    name: 'EnergyCell',
+    prims: [
+      { geo: boxGeometry(0.17, 0.04, 0.17, 0, 0.04, 0), material: MAT_CELL_DARK },   // socle 0..0.08
+      { geo: boxGeometry(0.13, 0.22, 0.13, 0, 0.25, 0), material: MAT_CELL },         // corps 0.03..0.47
+      { geo: boxGeometry(0.155, 0.05, 0.155, 0, 0.51, 0), material: MAT_CELL_DARK },  // capot → 0.56
+    ],
+  },
+  // Socket d'alimentation (~0.56 m): socle + piédestal + plate supérieure (3 primitives, 1 mesh)
+  socket: {
+    name: 'Socket',
+    prims: [
+      { geo: boxGeometry(0.28, 0.06, 0.28, 0, 0.06, 0), material: MAT_SOCKET_DARK }, // socle 0..0.12
+      { geo: boxGeometry(0.2, 0.16, 0.2, 0, 0.28, 0), material: MAT_SOCKET },        // piédestal 0.12..0.44
+      { geo: boxGeometry(0.26, 0.06, 0.26, 0, 0.5, 0), material: MAT_SOCKET_DARK },   // plate → 0.56
     ],
   },
 };

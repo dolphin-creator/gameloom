@@ -21,6 +21,7 @@ export default defineConfig({
         'dungeon.html': 'dungeon.html',
         'outpost.html': 'outpost.html',
         'reactor.html': 'reactor.html',
+        'cargo.html': 'cargo.html',
         'v02_test.html': 'v02_test.html',
       },
     },

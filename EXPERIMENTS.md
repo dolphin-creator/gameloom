@@ -641,9 +641,165 @@ demande de modification du core issue de ce slice.
 
 ---
 
+## Game #7 — Cargo Run (productivité + nouvelle famille mécanique : ramassage / transport / dépôt / alimentation)
+
+**Objectif** : (a) **mesurer le temps d'un agent neuf jusqu'au premier jeu jouable**
+(T0 → FIRST_PLAYABLE) ; (b) explorer une **nouvelle famille de mécaniques** — interaction
+/ ramassage / transport / dépôt / état d'objets — après que #5/#6 ont suffi à valider
+`moveEntity` et `createZone`. Black-box : seul `GAMELOOM.md` lu avant construction
+(+ outillage explicitement référencé : `make_glb.mjs`, `vite.config.ts`, `package.json`,
+`run_harnesses.mjs`) ; EXPERIMENTS/JOURNAL, sources + harnesses #1–#6, `src/core/**`
+**interdits** pendant la construction ; **core inchangé, aucune primitive nouvelle**.
+
+**Mesures de productivité** : T0 = 2026-09-28 10:35:34 · FIRST_PLAYABLE =
+**11:06:17** (durée **30 min 43 s**) · validé (harness vert + 5 runs + régressions) =
+11:08:26 (durée totale **32 min 52 s**) — le QA complet a coûté **~2 min** au-delà du
+premier jouable.
+
+**CORE_ACCESS** : **0 lecture core, 0 lecture de jeu, 0 lecture de harness**. Détecteurs
+utilisés : `tsc --noEmit` (workflow §14 — a révélé d'un coup le payload d'event, le
+struct complet de `applyPlayerControl`, le type de retour de `spawnAsset`) et le
+pipeline documenté `make_glb.mjs` + CLI `glb`.
+
+**Architecture** :
+- **Assets nouveaux** (2) : `energy_cell.glb` (0.34×0.56 m, static) + `socket.glb`
+  (0.56³ m, static) — `make_glb.mjs` (2 recettes + 4 matériaux) + `glb collider auto` +
+  `physics set static` + `validate`/`doctor` OK, 0 avertissement. Réutilisés : `crate`
+  (couvertures ×6), `ruins_column` (décor ×3).
+- **Map** : dépôt industriel borné 25×17 m (sol + 4 murs + linteau = objets du monde
+  sans entité ECS, pattern §5) ; zone de départ, 3 cellules (A(-6.5,3.5) B(2.5,-5.5)
+  C(6.5,4.5)), 3 sockets (A(-4,-7) B(0,-7) C(4,-7)), 6 couvertures, porte de sortie
+  (collider box 0.5×3.2×4 + mesh) au mur est (x=10.25), zone de sortie derrière
+  (x[10.6,13.6] z[-3,3]).
+- **Cellules** : `spawnAsset` + tags override `cell`/`cell_a…c` ; machine d'état
+  `world → carried → installed` par cellule ; **capacité 1 slot** (`cargo`), portée
+  E = 1.6 m (distance XZ sur `entityPosition`).
+- **Transport** : la cellule portée est repositionnée à chaque tick dans `onTick`
+  (1.0 m derrière le joueur d'après le `yaw` de `playerState`, y=0.35) via
+  `bodyOf` (scan `userData`, pattern legacy §5) + `setTranslation` — exact et
+  déterministe ; `moveEntity` inadapté (Y à contrôler + attachement précis).
+- **Dépôt** : E près du socket le plus proche → matching par clé ; bonne cellule =
+  install (position socket top, glow visuel, `socket.powered` + `cargo.install`) ;
+  mauvaise = **refus** (`cargo.reject`, état inchangé, message HUD). **Drop libre Q** :
+  reposition derrière le joueur clampé par `rt.raycast` (exclut la capsule joueur,
+  §8.5) → état `world` → re-ramassable.
+- **Porte** : état `doorOpen` **détermine réellement le passage** — fermée = collider
+  actif (preuve : le joueur s'arrête à x≈9.53 en avançant vers +X) ; à 3/3,
+  `power.complete` → `door.opened` → `removeCollider(true)` + `removeRigidBody`
+  (pattern §5) + animation du mesh (présentation, `onTick`).
+- **Victoire** : zone `createZone({ id:'exit', tags:['player'] })` — `onStay` ne
+  déclenche `game.victory` que si `doorOpen` (preuve négative : téléporté dans la zone
+  avec porte fermée → pas de victoire). Overlay `CARGO COMPLETE / EXIT REACHED`.
+- **Événements de jeu émis** (8) : `cargo.pickup`, `cargo.reject`, `cargo.drop`,
+  `cargo.install`, `socket.powered`, `power.complete`, `door.opened`, `game.victory`
+  (+ réutilisation core `spawn`, `zone.enter`).
+- **Hooks `_debug`** : `cargoState()` (power, cargo, doorOpen, victory, cells avec
+  état+position, sockets), `cargoInteract()`, `cargoDrop()`.
+- **HUD** : `POWER: n/3` · `CARGO: NONE|CELL X` · message transitoire (temps de jeu,
+  jamais `setTimeout`) · contrôles (E ramasser/installer, Q abandonner).
+
+**Résultats** : harness **44/44** (26 exigences mission + sous-checks, dont les négatifs
+: porte fermée bloque physiquement, zone seule ne suffit pas, mauvais socket refuse,
+1 seul slot) — **5 runs (`--repeat 5`), fingerprint identique `2f079a9b`** :
+```json
+{"seq":["cargo.pickup@0","cargo.reject@30","cargo.drop@30","cargo.pickup@30",
+ "socket.powered@30","cargo.install@30","cargo.pickup@30","socket.powered@30",
+ "cargo.install@30","zone.enter@30","cargo.pickup@65","socket.powered@65",
+ "cargo.install@65","power.complete@65","door.opened@65","zone.enter@82",
+ "game.victory@83"],
+ "final":{"power":3,"cargo":"NONE","doorOpen":true,"victory":true,
+ "sockets":{"A":true,"B":true,"C":true},"cells":{"A":"installed","B":"installed","C":"installed"},
+ "pos":{"A":[-4,0.56,-7],"B":[0,0.56,-7],"C":[4,0.56,-7]},"player":[11.8,0.92,0]}}
+```
+**Régressions** (orchestrateur officiel `--build`, toutes vertes) : v0.2 · #1 19/19 ·
+#2 14/14 · #3 21/21 · #4 34/34 · #5 32/32 · #6 (reactor) · #7 44/44 — **Games #1–6 :
+fichiers intacts, zéro régression**.
+
+**DOC_GAP** : **0** — aucune lecture ciblée n'a été nécessaire ; `GAMELOOM.md` + `tsc`
++ outillage documenté ont suffi pour une **nouvelle famille mécanique** (les 3
+DOC_GAP de précision de #6 — convention visée, format health, type `spawnAsset` —
+sont corrigés dans le manuel et n'ont pas resurgi). Observations de **précision**
+(hors mission DOC_GAP, aucune lecture n'a été rendue nécessaire) : (1) le payload
+custom de `bus.emit` passe sous le champ `data` de l'`EventCtx` (§10) — l'exemple §5
+`emit('mon.event', id, {...})` ne l'explicite pas, `tsc` l'a fait en 1 passe ;
+(2) `EntityT.id` est typé `string | undefined` alors que la runtime garantit une
+chaîne (§5 « id = string ») — garde `typeof` ajoutée préventivement.
+
+**CORE_FRICTION** : **AUCUNE**. Aucune mécanique générique n'a dû être reproduite que
+le moteur devrait posséder : chaque besoin s'est résolu par une primitive v0.2
+(`entityPosition`, `createZone`/`zone.enter`, `rt.raycast`, `bus` custom events) ou par
+un pattern **explicitement documenté** dans §5 (objets du monde « sol, murs, **porte** »
++ `removeCollider`/`removeRigidBody` + animation mesh ; `bodyOf`/`setTranslation`
+« pattern legacy, toujours valide »). Zéro LOC de contournement, zéro itération sur
+les patterns.
+
+**GAME_FRICTION** (mesure par famille, lignes hors commentaires ; complexité propre à
+Cargo Run, ne doit PAS entrer dans GameLoom) :
+
+| Famille | État manuel | Connaissances GameLoom requises | Duplication | Workaround | LOC approx. |
+|---|---|---|---|---|---|
+| **PICKUP** (portée E, 1 slot) | `phase`, `cargo` | `entityPosition`, `playerState`, `bus.emit(data)` | 0 | aucun | ~22 |
+| **DROP** (libre Q, re-ramassable) | `phase`, `cargo=null` | `rt.raycast` (excl. capsule), `yaw` via `playerState` (conv. 3) | 0 | aucun | ~15 |
+| **CARRIED_OBJECT** (suivi/tick) | `phase=carried` | `bodyOf` scan `userData` (§5 legacy) + `setTranslation` | `bodyOf` 4e occurrence (#3/#4/#5/#7) | `moveEntity` inadapté (Y + attachement) | ~14 |
+| **SOCKET** (matching 3×3, refus) | `powered`, `phase=installed` | tags override, `bus.emit`, présentation DOM/mesh | 0 | aucun | ~30 |
+| **DOOR** (blocage réel → ouverture) | `doorOpen` + refs Rapier/mesh | §5 objets du monde + `removeCollider(true)` | 3e porte (#2/#4/#7) mais recette documentée, 0 itération | aucun | ~25 (+helper partagé) |
+
+**Bugs** : **0** (core et jeu). 1 bug **côté outillage de l'agent** (harness, non
+livré tel quel) : la boucle d'attente de boot comparait le booléen
+`typeof window.GameLoom === "object"` à la chaîne `'object'` → 2 faux « FAIL boot »
+(~5 min) avant correction à `typeof window.GameLoom === 'object'`. 1 autre temps perdu
+agent (~3 min) : lecture initiale de `boxGeometry(hx,hy,hz)` de `make_glb.mjs` comme
+dimensions totales alors que l'en-tête du tool documente « Demi-dimensions » — assets
+régénérés.
+
+**Observations** :
+1. **Nouvelle famille mécanique = zéro friction core** : ramassage/transport/dépôt/
+   alimentation/porte saturent la surface v0.2 + patterns documentés sans aucune
+   découverte d'API bloquante — le manuel est suffisant pour une famille **nouvelle**,
+   pas seulement une recomposition de mécaniques connues (contrairement au profil #6
+   qui retestait des primitives récentes).
+2. **Événements custom + `data`** comme véhicule de l'état de gameplay (8 events,
+   payload `{ cell, socket, power }`) — la frontière EVENT→ACTION se compose avec les
+   hooks `_debug` et le harness sans extension du core.
+3. **Condition de victoire composée** (`doorOpen` ∧ `onStay(exit)`) : idem #6
+   (3 relais ∧ entrée réacteur) — la garde de condition multiple reste côté jeu, la
+   zone côté core.
+4. **Déterminisme : 7e slice consécutive à 100 %** (fingerprint identique sur 5 runs,
+   Windows, Chrome headless SwiftShader) ; le déplacement KCC du joueur pendant le
+   passage porte (5.6 m/s × ticks) n'introduit aucune dérive.
+5. **Discipline agent** : les 2 temps perdus (predicate de boot, demi-dimensions GLB)
+   sont des erreurs de lecture d'agent, pas des gaps du manuel — vérifier le prédicat
+   d'attente avant de lancer une attente de 90 s, et relire l'en-tête d'un tool avant
+   d'en inférer l'API.
+6. **Dérive baseline (à noter, non causée par #7)** : le baseline contient un 6e jeu
+   `reactor` (html + harness + asset + script npm) non documenté dans `GAMELOOM.md`
+   (structure §3, assets §3, orchestrator §15 citent 5 jeux + v02_test et 11 GLB) ;
+   l'orchestrateur officiel liste 6 harnesses sans `test_reactor` — celui-ci est lancé
+   explicitement pour rester vert.
+
+**Comparaison historique** :
+- **#5 (black-box v0.1)** : 1 DOC_GAP + 3 bugs de friction + 26 LOC/jeu (entité
+  mobile) + ~46 LOC/jeu (zones).
+- **#6 (black-box v0.2)** : 3 DOC_GAP de précision, 0 CORE_FRICTION, 0 bug, 0 LOC de
+  contournement — les promotions v0.2 ont livré.
+- **#7 (black-box v0.2, famille mécanique nouvelle)** : **0 DOC_GAP, 0 CORE_FRICTION,
+  0 bug, 0 LOC de contournement** ; 100 % du gameplay est composé de primitives v0.2 +
+  patterns documentés. La courbe de friction est plate : le coût marginal d'une famille
+  de mécaniques **nouvelle** est désormais le coût du gameplay lui-même (~110 LOC de
+  règles : slots, matching, état d'objets), pas l'adaptation au moteur.
+
+**Nouvelles candidates** : **AUCUNE proposée** (D002). Considérées et **rejetées** :
+(1) `setEntityPosition(id, pos)` / attachement « carried object » — 1 occurrence,
+couvert par le pattern legacy documenté (`bodyOf` + `setTranslation`), et D010
+interdit la fuite Rapier dans l'API gameplay ; (2) primitif « porte » — 3e occurrence
+(#2/#4/#7) mais **zéro friction mesurée** et recette explicite dans §5 : promouvoir
+sans friction mesurée violerait D002.
+
+---
+
 ## Cross-game observations
 
-Synthèse des 5 slices :
+Synthèse des 7 slices :
 
 - **Core stable #1→#5, première extension en v0.2** : le core (7 fichiers, ~890 LOC) a
   été **créé sur le jeu #1 et n'a pas été modifié pour les jeux #2, #3, #4 et #5**
@@ -653,10 +809,11 @@ Synthèse des 5 slices :
   `zone.enter`/`zone.exit` + `GameLoom.zones()`, `version` 0.2.0) — cf. § v0.2. Tous les
   jeux n'utilisent que la surface publique (+ `rt.world`/`rt.scene`/`rt.bus` pour les
   objets du monde).
-- **Déterminisme 100 % sur les 5 jeux** : timestep fixe + scènes contrôlées + pas de
+- **Déterminisme 100 % sur les 7 jeux** : timestep fixe + scènes contrôlées + pas de
   `Math.random` non seedé. Répartition des runs : #1 = 8 (Linux) + 3 (Windows) ;
-  #2 = 3 (Windows) ; #3 = 5 (Windows) ; #4 = 5 (Windows) ; **#5 = 5 (Windows)** — tous
-  avec fingerprint de ticks identique quand le harness en produit un (#3, #4, #5).
+  #2 = 3 (Windows) ; #3 = 5 (Windows) ; #4 = 5 (Windows) ; **#5 = 5 (Windows)** ;
+  #6 = 5 (Windows) ; **#7 = 5 (Windows)** — tous avec fingerprint de ticks identique
+  quand le harness en produit un (#3, #4, #5, #6, #7).
 - **JSON-first** : sur les 4 jeux, **0 bug** a nécessité un screenshot pour être trouvé
   ou prouvé (la géométrie se lit dans `snapshot()`, ex. « le joueur s'arrête à
   x≈-13.5 »). La vision est réservée à la validation visuelle finale (1 screenshot/jeu).
@@ -684,7 +841,8 @@ Synthèse des 5 slices :
   au tool call.**
 - **Régressions** : chaque slice a relancé les harness des slices précédentes (restés
   verts) : #4 a validé #1 (19/19) + #2 (14/14) + #3 (21/21) ; #5 a validé #1 + #2 + #3 + #4
-  (19/19, 14/14, 21/21, 34/34) avant de figer.
+  (19/19, 14/14, 21/21, 34/34) avant de figer ; #7 a validé v0.2 + #1–#5 + #6 (reactor)
+  + #7 (44/44) via l'orchestrateur officiel `--build`.
 
 ---
 

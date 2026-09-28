@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crystal Siege</title>
+  <style>
+    html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#0b0e13; font-family:ui-monospace,Menlo,Consolas,monospace; }
+    #game { position:fixed; inset:0; width:100%; height:100%; display:block; }
+    #hud { position:fixed; inset:0; pointer-events:none; color:#e8edf5; text-shadow:0 1px 3px rgba(0,0,0,.8); }
+    .hud-block { position:fixed; padding:10px 14px; font-size:15px; line-height:1.6; }
+    #hud-topleft { left:14px; top:12px; }
+    #hud-topright { right:14px; top:12px; text-align:right; }
+    #hud-bottomleft { left:14px; bottom:12px; font-size:12px; opacity:.85; }
+    #crystal-bar { width:180px; height:10px; background:#2a3140; border:1px solid #4a5568; margin-top:4px; }
+    #crystal-fill { height:100%; width:100%; background:#7fd4ff; }
+    .state { display:inline-block; min-width:90px; }
+    .state.ok { color:#69d17a; }
+    .state.warn { color:#e8c15a; }
+    .state.bad { color:#e86a5a; }
+    #overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(5,8,12,.82); pointer-events:auto; cursor:pointer; z-index:10; }
+    #overlay .panel, #win .panel, #gameover .panel { text-align:center; color:#e8edf5; }
+    #overlay h1, #win h1 { font-size:42px; margin:0 0 10px; letter-spacing:2px; }
+    #overlay p, #win p, #gameover p { font-size:15px; opacity:.9; margin:6px 0; }
+    #win { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(5,20,10,.88); pointer-events:auto; cursor:pointer; z-index:11; }
+    #win h1 { color:#7fe0a0; }
+    #gameover { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(20,5,5,.88); pointer-events:auto; cursor:pointer; z-index:11; }
+    #gameover h1 { font-size:42px; margin:0 0 10px; color:#ff7a6a; letter-spacing:2px; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="hud">
+    <div class="hud-block" id="hud-topleft">
+      <div>CRISTAL&nbsp; <span id="hud-crystal">100</span></div>
+      <div id="crystal-bar"><div id="crystal-fill"></div></div>
+      <div>ENNEMIS&nbsp; <span id="hud-enemies">5</span></div>
+    </div>
+    <div class="hud-block" id="hud-topright">
+      <div>ÉTAT&nbsp; <span id="hud-state" class="state warn">COMBAT</span></div>
+    </div>
+    <div class="hud-block" id="hud-bottomleft">WASD déplacer · souris regarder · clic gauche tirer · défendez le cristal</div>
+  </div>
+  <div id="overlay">
+    <div class="panel">
+      <h1>CRYSTAL SIEGE</h1>
+      <p>Cinq gardiens convergent vers le cristal central. Éliminez-les avant qu'ils ne l'atteignent.</p>
+      <p>Chaque gardien qui touche la zone du cristal lui inflige 25 dégâts. Le cristal a 100 PV.</p>
+      <p id="ov-sub">clique pour jouer</p>
+    </div>
+  </div>
+  <div id="win">
+    <div class="panel">
+      <h1>VICTOIRE</h1>
+      <p id="win-detail"></p>
+      <p>clique pour rejouer</p>
+    </div>
+  </div>
+  <div id="gameover">
+    <div class="panel">
+      <h1>GAME OVER</h1>
+      <p id="go-detail"></p>
+      <p>clique pour recommencer</p>
+    </div>
+  </div>
+  <script type="module">
+    const overlay = document.getElementById('overlay');
+    overlay.addEventListener('click', () => { overlay.style.display = 'none'; GameLoom.resume(); });
+    const replay = () => window.location.reload();
+    document.getElementById('win').addEventListener('click', replay);
+    document.getElementById('gameover').addEventListener('click', replay);
+  </script>
+  <script type="module" src="/src/game/siege/main.ts"></script>
+</body>
+</html>

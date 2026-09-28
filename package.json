@@ -19,6 +19,7 @@
     "test:outpost": "node tools/test_outpost.mjs",
     "test:reactor": "node tools/test_reactor.mjs",
     "test:cargo": "node tools/test_cargo.mjs",
+    "test:siege": "node tools/test_siege.mjs",
     "test:viewer": "node tools/test_viewer.mjs"
   },
   "dependencies": {

@@ -141,9 +141,11 @@ npm run viewer -- --host 127.0.0.1 --port 5174      # 8. Asset Viewer (outil d'i
 
 Un jeu = **une entrée HTML** (shell DOM : canvas `#game`, HUD, overlays) + **un `main.ts`**
 qui appelle le core. (1) créer `<nom>.html` (copier `dungeon.html`) + `<nom>/main.ts` ;
-(2) entrée dans `rollupOptions.input` ; (3) optionnel : `test:<nom>` (dupliquer un harness,
-changer `URL_TARGET` + checks) ; (4) `npm run build` + `cp assets/*.glb dist/assets/` →
-tester.
+(2) entrée dans `rollupOptions.input` ; (3) harness : dupliquer un harness →
+`tools/test_<nom>.mjs` (changer `URL_TARGET` + checks) ; pour l'inclure dans la suite
+officielle (`npm test`) : script npm `test:<nom>` + `test_<nom>` dans la liste `OFFICIAL`
+de `tools/run_harnesses.mjs` — `check:consistency` vérifie l'alignement fichier ↔ script ↔
+OFFICIAL ; (4) `npm run build` + `cp assets/*.glb dist/assets/` → tester.
 
 Exemple minimal **réel** (extrait de `src/game/main.ts`) :
 ```ts
@@ -167,9 +169,13 @@ boot();
 ```
 
 `createRuntime` : init Rapier WASM, crée le joueur `player`, le monde, la caméra, expose
-`window.GameLoom`. **Le core fournit** : joueur, physique, temps déterministe, `raycast`,
-actions `explode/destroy/addScore/sound`, système `damage → health.zero`. **Le jeu fournit** :
-tir, vagues, munitions, audio, HUD, règles.
+`window.GameLoom`. **Le core fournit** : le moteur physique (Rapier), le joueur, le temps
+déterministe, `raycast`, les actions `explode/destroy/addScore/sound`, le système
+`damage → health.zero` — mais **PAS de sol ni de murs** (le monde est créé par le jeu, §5).
+**Le jeu fournit** : sol/murs, tir, vagues, munitions, audio, HUD, règles.
+Joueur : spawné au boot à `(0, 2, 0)` (non configurable par `createRuntime`) ;
+repositionnement initial : `GameLoom._debug.teleportPlayer(x, 0.92, z)` avant le 1er tick
+(y≈0.92 = repos au sol).
 
 **Méthodes Runtime appelables du code jeu** (public, `interface Runtime`) :
 `rt.spawnAsset(asset, at, overrides?)` → entité `{ id, … }` (**id = `string`**) ou `null`
@@ -241,7 +247,8 @@ h.destroy();                                      // retire la zone (pas de zone
 Évaluation : **après la passe `onTick` du jeu, avant `rt.tick++`** (positions finales du
 tick). Le core émet **`zone.enter` / `zone.exit`** sur arête uniquement — `entity` = entité
 observée, `other` = id de la zone, `data = { zone, x, z }` — et appelle `onStay(eid)` chaque
-tick suivant (jamais au tick d'enter). Entité détruite = **purge silencieuse** (pas de
+tick suivant (jamais au tick d'enter). Une entité créée déjà à l'intérieur d'une zone produit
+donc `zone.enter` lors de sa première évaluation. Entité détruite = **purge silencieuse** (pas de
 `zone.exit` synthétique) ; `zone.destroy()` idem. Debug : `GameLoom.zones()` →
 `{ id, x1, x2, z1, z2, inside: string[] }[]`. Pattern legacy (jeux #1–#4) : inclusion AABB
 manuelle dans `onTick` + booléen `previousInside` pour les arêtes — n'émettre que sur la
@@ -445,7 +452,11 @@ direction de visée courante (après `aimAt`/`setLook`) — `origin` = position 
 `window.GameLoom._debug` au boot — ex. `gameFire()` (tir), `gameInteract()` (interagir à
 portée), `<nom>State()` (JSON d'état du jeu : porte, clé, ennemis, victoire…),
 `rayProbe(o, d, dist)` (sonde raycast arbitraire). Pas de `gameLook` : visée par
-`aimAt`/`setLook`.
+`aimAt`/`setLook`. **TS strict** : `window.GameLoom` n'a pas de déclaration de type globale —
+depuis `main.ts`, y accéder par cast local (ex. `const dbg = (window as { GameLoom?:
+{ _debug?: Record<string, unknown> } }).GameLoom?._debug`). De même `entity.id` / `ctx.entity`
+sont typés `string | undefined` (toujours définis au runtime) : guard avant usage
+(`if (!hit?.entity) return;`).
 
 ## 14. Workflow de debug recommandé
 

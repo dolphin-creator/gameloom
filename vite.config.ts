@@ -22,6 +22,7 @@ export default defineConfig({
         'outpost.html': 'outpost.html',
         'reactor.html': 'reactor.html',
         'cargo.html': 'cargo.html',
+        'siege.html': 'siege.html',
         'v02_test.html': 'v02_test.html',
         'viewer.html': 'viewer.html',
       },

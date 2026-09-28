@@ -5,7 +5,7 @@
 // sortie (normal, FAIL, exception, timeout, SIGINT/SIGTERM). Ports 4173/9224: l'orchestrateur
 // REFUSE de démarrer s'ils sont occupés — il ne tue jamais un processus qu'il n'a pas créé.
 // Usage: node tools/run_harnesses.mjs [test_xxx...] [--repeat N] [--build]
-//   - sans arg: les 8 harnesses officiels (v02 + jeux #1–#7)
+//   - sans arg: les 9 harnesses officiels (v02 + jeux #1–#8)
 //   - --build: npm run build + copie assets/ → dist/assets/ AVANT preview (entrée: npm test)
 //   - --repeat N: chaque harness lancé N fois (déterminisme/fingerprint)
 // Exit codes: 0 = tous verts · 1 = échec harness · 2 = infrastructure (serveur/timeout/ports).
@@ -34,7 +34,7 @@ const repeatIdx = argv.indexOf('--repeat');
 const repeat = repeatIdx >= 0 ? Math.max(1, Number(argv[repeatIdx + 1] ?? 1)) : 1;
 const names = argv.filter((a) => a.startsWith('test_'));
 // SUITE OFFICIELLE (source de vérité unique — liste explicite, pas de découverte).
-const OFFICIAL = ['test_v02', 'test_headless', 'test_temple', 'test_ruins', 'test_dungeon', 'test_outpost', 'test_reactor', 'test_cargo'];
+const OFFICIAL = ['test_v02', 'test_headless', 'test_temple', 'test_ruins', 'test_dungeon', 'test_outpost', 'test_reactor', 'test_cargo', 'test_siege'];
 const harnesses = names.length ? names : OFFICIAL;
 for (const h of harnesses) {
   if (!existsSync(join(REPO, 'tools', `${h}.mjs`))) { console.error(`ERREUR: harness inconnu: ${h}`); process.exit(2); }

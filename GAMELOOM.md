@@ -85,7 +85,7 @@ tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex der
 ├── GAMELOOM.md ← ce fichier · EXPERIMENTS.md ← mémoire d'ingénierie · JOURNAL.md ← archive
 ├── index/temple/ruins/dungeon/outpost/reactor/cargo.html ← shells des 7 jeux (canvas #game, HUD, overlays)
 │   · v02_test.html ← page de test des primitives core v0.2 (pas un jeu)
-├── package.json ← scripts : dev, build, preview, glb, test (orchestrateur),
+├── package.json ← scripts : dev, build, preview, glb, check:consistency, test (orchestrateur),
 │   test:v02/headless/temple/ruins/dungeon/outpost/reactor/cargo
 ├── tsconfig.json · vite.config.ts ← TS strict noEmit · multi-entry (8 HTML), base './'
 ├── assets/ ← 14 GLB : barrel, crate, target, switch, guardian, artifact, ruins_column,
@@ -97,6 +97,7 @@ tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex der
 │              outpost/main.ts (#5, zones + moveEntity core), reactor/main.ts (#6),
 │              cargo/main.ts (#7) · v02_test/main.ts (page debug)
 └── tools/    ← run_harnesses.mjs (ORCHESTRATEUR officiel, §15), cli.mjs (CLI `glb`),
+                check_consistency.mjs (CHECKER de cohérence mécanique, §4),
                 test_v02/headless/temple/ruins/dungeon/outpost/reactor/cargo.mjs (harness CDP 9224),
                 make_glb.mjs, diag_*.mjs (one-shots), blender/ (make_assets.py, make_ruins_assets.py,
                 make_dungeon_assets.py)
@@ -134,24 +135,32 @@ Prérequis : Node 22, accès réseau npm. Commandes validées (copier/coller) :
 ```bash
 cd ~/gameloom && npm install                        # 1. install
 npx tsc --noEmit                                     # 2. typecheck (pas de script dédié)
-npm run build && cp assets/*.glb dist/assets/        # 3. build prod + copie GLB (OBLIGATOIRE)
-npm run preview                                      # 4. servir le build (http://localhost:4173)
+npm run check:consistency                           # 3. cohérence mécanique (versions, entrées, harnesses, GLB, claims) — inclus dans npm test
+npm run build && cp assets/*.glb dist/assets/        # 4. build prod + copie GLB (OBLIGATOIRE)
+npm run preview                                      # 5. servir le build (http://localhost:4173)
 #    → #1: / · #2: /temple.html · #3: /ruins.html · #4: /dungeon.html · #5: /outpost.html
 #    · #6: /reactor.html · #7: /cargo.html
 #    · page debug v0.2: /v02_test.html
-node tools/run_harnesses.mjs --build                 # 5. tests OFFICIELS (build + preview + Chrome + 8 harnesses, §15)
-npm run glb -- inspect assets/barrel.glb             # 6. CLI glb (outillage asset)
+node tools/run_harnesses.mjs --build                 # 6. tests OFFICIELS (build + preview + Chrome + 8 harnesses, §15)
+npm run glb -- inspect assets/barrel.glb             # 7. CLI glb (outillage asset)
 ```
 
 - `npm run build` = `tsc --noEmit && vite build` ; chaque jeu = une entrée HTML dans `rollupOptions.input` (`vite.config.ts`, 8 entrées).
 - **Ne PAS tester sur `npm run dev`** (5173) : HMR = double-boot (2 runtimes) → toujours
   build production (4173).
 - `npm run glb -- <args>` : le `--` sépare le script npm des arguments CLI.
-- **`node tools/run_harnesses.mjs` (= `npm test`) est le mécanisme officiel** : un seul
+- **`node tools/run_harnesses.mjs` est le mécanisme officiel des tests** (`npm test` =
+  `npm run check:consistency` + cet orchestrateur `--build`) : un seul
   cycle de vie (build optionnel → preview 4173 → Chrome CDP 9224 → 8 harnesses officiels →
   teardown garanti sur tous les chemins de sortie, ports 4173/9224 vérifiés libres —
   s'ils sont occupés au démarrage, l'orchestrateur refuse de démarrer, exit 2). Les scripts
   `test:<nom>` individuels supposent un Chrome CDP déjà lancé (§15).
+- **`npm run check:consistency`** : checker de cohérence mécanique (Node pur, sans dépendance,
+  **lecture seule — ne réécrit jamais un fichier**) : compare la version runtime
+  (`window.GameLoom.version`) aux versions `package.json`/`package-lock`, les entrées Vite aux
+  pages HTML racine, la liste `OFFICIAL` de l'orchestrateur aux fichiers `tools/test_*.mjs` et
+  aux scripts npm `test:*`, l'inventaire GLB documenté à `assets/*.glb`, et les claims
+  numériques de ce manuel ; exit 1 si incohérence.
 - Chaque harness cible son jeu via `URL_TARGET` (défauts `http://localhost:4173/`,
   `/temple.html`, `/ruins.html`, `/dungeon.html`, `/outpost.html`, `/reactor.html`,
   `/cargo.html`, `/v02_test.html`) — overridable par la variable `URL_TARGET`.
@@ -469,7 +478,8 @@ Escalade (du moins coûteux au plus coûteux) — ne monter que si le niveau pr�
 
 ## 15. CDP / harness déterministe
 
-**Mécanisme officiel : `node tools/run_harnesses.mjs`** (= `npm test`). Cycle de vie complet
+**Mécanisme officiel : `node tools/run_harnesses.mjs`** (`npm test` = `check:consistency` + cet
+orchestrateur `--build`). Cycle de vie complet
 et garanti (portable Windows/macOS/Linux, Node pur) : build (`--build`) → `vite preview`
 (4173) + **Chrome headless CDP (9224)** lancés détachés (logs tmp, PID conservés) → chaque
 harness (`tools/test_*.mjs`, **1 target page frais par harness** — isolation de la console ;

@@ -1030,6 +1030,20 @@ tuer l'écouteur inconnu — l'orchestrateur ne manipule que les processus qu'il
 Reason: cycle de vie garanti par le tool call + isolation stricte des assertions console
 par target + sécurité des processus extérieurs + portabilité sans dépendance.
 
+### D013 — Checker de cohérence mécanique (`tools/check_consistency.mjs`, `npm run check:consistency`)
+Status: en vigueur (2026-09-28).
+Evidence: l'audit de cohérence v0.2 a trouvé 8 drifts mécaniques (version npm 0.1.0 vs
+runtime 0.2.0, « 6 entrées » vs 8, compteurs 5 vs 7 slices, lock désynchronisé) — tous
+détectables par comparaison de fichiers réels contre des claims documentaires structurés.
+Decision: checker Node pur (~90 LOC, sans dépendance, **lecture seule** — il ne réécrit
+jamais un fichier) ; `npm test` l'exécute avant l'orchestrateur. Sources de vérité :
+`src/core/runtime.ts` (version publique), `vite.config.ts` (entrées), `OFFICIAL` de
+`run_harnesses.mjs` (suite officielle), `assets/*.glb` (inventaire) ; `GAMELOOM.md` n'est
+jamais une source de vérité, seulement le côté « claim ».
+Reason: les drifts étaient récurrents après chaque jeu et purement mécaniques ; un
+garde-fou minimal suffit — ni parser de Markdown général, ni auto-fix, ni nouvelle
+dépendance.
+
 ---
 
 ## Open questions

@@ -1106,3 +1106,24 @@ Ce que les **prochaines expériences** devraient mettre sous pression :
 6. **Zones sous pression** : zones sur plusieurs tags avec entrées/sorties simultanées
    (joueur + 5+ entités mobiles dans 3+ zones) — vérifier le coût de la résolution
    dynamique des tags par tick.
+
+---
+
+## Asset pipeline — workflow itératif viewer (2026-09-28)
+
+Deux DOC_GAPs **démontrés** pendant le workflow black-box de création d'asset (agent ne
+lisant que `GAMELOOM.md`) et le workflow itératif humain ↔ agent ↔ viewer (1 seul viewer
+`127.0.0.1:5174` ; assets `supply_crate.glb` et `industrial_generator.glb`) :
+
+1. **Recettes `make_glb.mjs`** : `boxGeometry(hx,hy,hz,…)` prend des **demi-dimensions**,
+   contrairement au `--size` du CLI `glb` (dimensions totales) — non documenté ; un agent
+   a produit un collider de 2,62 m au lieu de 1,35 m (détecté par `glb inspect`, corrigé
+   par régénération).
+2. **Itération viewer** : régénérer un GLB pendant que le viewer tourne ne nécessite
+   **aucun redémarrage** du serveur (`vite preview` ressert `dist/` depuis disque à chaque
+   requête) ; si le navigateur garde l'ancienne ressource, cache-buster de l'URI asset
+   (`?asset=/assets/foo.glb?v=2`) — non documenté, validé en pratique.
+
+Les deux points sont désormais documentés dans `GAMELOOM.md` (§2 pipeline, §19 viewer).
+Aucune modification du core / viewer / jeux ; seuls les 2 GLB (1 nouveau, 1 régénéré) et
+`tools/make_glb.mjs` (recettes) ont changé.

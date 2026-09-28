@@ -75,6 +75,11 @@ npm run glb -- physics set assets/<nom>.glb --body static            # ou dynami
 npm run glb -- validate assets/<nom>.glb && npm run glb -- doctor assets/<nom>.glb
 ```
 
+**Nouvelle recette** : `RECIPES[nom] = { name, prims: [{ geo, material }] }` ;
+`geo = boxGeometry(hx, hy, hz, cx, cy, cz)` — **hx/hy/hz = DEMI-dimensions** (dimensions
+totales = `2×hx`…), `cx/cy/cz` = centre local (Y-up, base à y=0). **Diffère du `--size`
+du CLI `glb collider`, qui prend des dimensions TOTALES** (§7).
+
 **Chrome headless** (`--headless=new`, WebGL SwiftShader) pour les
 tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex derrière l'adapter, Rapier dans le runtime).
 
@@ -89,8 +94,9 @@ tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex der
 ├── package.json ← scripts : dev, build, preview, viewer, glb, check:consistency, test (orchestrateur),
 │   test:v02/headless/temple/ruins/dungeon/outpost/reactor/cargo, test:viewer (harness autonome §19)
 ├── tsconfig.json · vite.config.ts ← TS strict noEmit · multi-entry (9 HTML), base './'
-├── assets/ ← 14 GLB : barrel, crate, target, switch, guardian, artifact, ruins_column,
-│            dungeon_key, dungeon_mage, dungeon_spikes, survivor, reactor, socket, energy_cell
+├── assets/ ← 16 GLB : barrel, crate, target, switch, guardian, artifact, ruins_column,
+│            dungeon_key, dungeon_mage, dungeon_spikes, survivor, reactor, socket,
+│            energy_cell, supply_crate, industrial_generator
 ├── src/core/ ← LE CORE (types, ecs, events, actions, glbs, runtime, index) — modifier
 │             seulement selon la politique documentaire + après EXPERIMENTS.md
 ├── src/game/ ← 7 jeux (références d'usage) : main.ts (#1 Barrel Blaster),
@@ -110,7 +116,7 @@ tests. Règle : une dépendance ne doit pas coupler l'API publique (Miniplex der
 (jeu le plus récent) ou `src/game/outpost/main.ts` (moveEntity + zones core) ou
 `src/game/dungeon/main.ts` (dense).
 
-**Inventaire des 14 GLB existants** (capacités = métadonnées `com.gameloom.v0`, vérifiable
+**Inventaire des 16 GLB existants** (capacités = métadonnées `com.gameloom.v0`, vérifiable
 par `npm run glb -- inspect assets/<nom>.glb`) :
 
 | Asset | Body | Capacités (`components`) |
@@ -129,6 +135,8 @@ par `npm run glb -- inspect assets/<nom>.glb`) :
 | `reactor.glb` | static | — (réacteur #6) |
 | `socket.glb` | static | — (socket #7) |
 | `energy_cell.glb` | static | — (cellule d'énergie #7) |
+| `supply_crate.glb` | dynamic (18 kg) | `Health.max=40` (caisse de ravitaillement ~1 m) |
+| `industrial_generator.glb` | static | — (générateur industriel ~1,35 m) |
 
 ## 4. Quick Start
 
@@ -603,6 +611,11 @@ npm run viewer -- --host 127.0.0.1 --port 5174      # 2. viewer sur 127.0.0.1:51
   infrastructure extérieure, aucune logique réseau dans le repo.
 - **URI = contrat asset** : `?asset=/assets/foo.glb` (relative à l'origine du serveur —
   compatible reverse proxy / chemin distant) ; aucune liste d'assets codée en dur.
+- **GLB régénéré pendant que le viewer tourne** : pas de redémarrage du serveur —
+  `vite preview` ressert le fichier depuis `dist/` à chaque requête (copier le GLB
+  régénéré dans `dist/assets/` et recharger la page suffit). Si le navigateur garde
+  l'ancienne ressource, utiliser un cache-buster dans l'URI asset
+  (`?asset=/assets/foo.glb?v=2`) ; le serveur est indépendant de ce mécanisme.
 - **Options URL** (état réécrit via `history.replaceState` → une URL partagée décrit la vue) :
   `&animation=<nom>` (sélection + lecture) · `&skeleton=1` · `&collider=1` · `&wireframe=1` ·
   `&bbox=1` · `&grid=1` · `&axes=1` · `&mesh=0` · `&materials=0` · `&speed=2` · `&loop=0`.

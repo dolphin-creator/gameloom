@@ -48,6 +48,16 @@ const MAT_CELL = { name: 'Cell', pbrMetallicRoughness: { baseColorFactor: [0.15,
 const MAT_CELL_DARK = { name: 'CellDark', pbrMetallicRoughness: { baseColorFactor: [0.09, 0.16, 0.2, 1], metallicFactor: 0.4, roughnessFactor: 0.6 } };
 const MAT_SOCKET = { name: 'Socket', pbrMetallicRoughness: { baseColorFactor: [0.32, 0.36, 0.42, 1], metallicFactor: 0.5, roughnessFactor: 0.55 } };
 const MAT_SOCKET_DARK = { name: 'SocketDark', pbrMetallicRoughness: { baseColorFactor: [0.16, 0.19, 0.23, 1], metallicFactor: 0.5, roughnessFactor: 0.5 } };
+// Caisse de ravitaillement militaire (supply_crate)
+const MAT_CRATE = { name: 'Crate', pbrMetallicRoughness: { baseColorFactor: [0.43, 0.45, 0.29, 1], metallicFactor: 0, roughnessFactor: 0.85 } };
+const MAT_CRATE_DARK = { name: 'CrateDark', pbrMetallicRoughness: { baseColorFactor: [0.32, 0.34, 0.21, 1], metallicFactor: 0, roughnessFactor: 0.85 } };
+const MAT_METAL = { name: 'Metal', pbrMetallicRoughness: { baseColorFactor: [0.21, 0.22, 0.19, 1], metallicFactor: 0.6, roughnessFactor: 0.5 } };
+const MAT_LABEL = { name: 'Label', pbrMetallicRoughness: { baseColorFactor: [0.74, 0.7, 0.46, 1], metallicFactor: 0, roughnessFactor: 0.9 } };
+const MAT_WHITE = { name: 'White', pbrMetallicRoughness: { baseColorFactor: [0.88, 0.88, 0.84, 1], metallicFactor: 0, roughnessFactor: 0.7 } };
+// Générateur industriel (industrial_generator)
+const MAT_GEN_BODY = { name: 'GenBody', pbrMetallicRoughness: { baseColorFactor: [0.34, 0.4, 0.37, 1], metallicFactor: 0.1, roughnessFactor: 0.8 } };
+const MAT_GEN_DARK = { name: 'GenDark', pbrMetallicRoughness: { baseColorFactor: [0.17, 0.19, 0.21, 1], metallicFactor: 0.4, roughnessFactor: 0.65 } };
+const MAT_GEN_ACCENT = { name: 'GenAccent', pbrMetallicRoughness: { baseColorFactor: [0.78, 0.62, 0.12, 1], metallicFactor: 0.1, roughnessFactor: 0.8 } };
 
 // ---------- recettes d'assets (origine à la base: y=0 au sol, Y-up glTF) ----------
 const RECIPES = {
@@ -95,6 +105,80 @@ const RECIPES = {
       { geo: boxGeometry(0.28, 0.06, 0.28, 0, 0.06, 0), material: MAT_SOCKET_DARK }, // socle 0..0.12
       { geo: boxGeometry(0.2, 0.16, 0.2, 0, 0.28, 0), material: MAT_SOCKET },        // piédestal 0.12..0.44
       { geo: boxGeometry(0.26, 0.06, 0.26, 0, 0.5, 0), material: MAT_SOCKET_DARK },   // plate → 0.56
+    ],
+  },
+  // Caisse de ravitaillement militaire (~0.87 m): corps + couvercle + renforts + poignées + marquages (24 primitives, 1 mesh)
+  supply_crate: {
+    name: 'SupplyCrate',
+    prims: [
+      { geo: boxGeometry(0.45, 0.34, 0.325, 0, 0.34, 0), material: MAT_CRATE },         // corps 0.90×0.68×0.65 → 0.68
+      { geo: boxGeometry(0.48, 0.08, 0.355, 0, 0.76, 0), material: MAT_CRATE_DARK },    // couvercle sur-dimensionné → 0.84
+      { geo: boxGeometry(0.46, 0.025, 0.08, 0, 0.845, 0), material: MAT_CRATE_DARK },   // crête centrale du couvercle → 0.87
+      { geo: boxGeometry(0.46, 0.045, 0.335, 0, 0.12, 0), material: MAT_CRATE_DARK },   // bande de renfort basse
+      { geo: boxGeometry(0.46, 0.045, 0.335, 0, 0.58, 0), material: MAT_CRATE_DARK },   // bande de renfort haute
+      { geo: boxGeometry(0.49, 0.03, 0.365, 0, 0.70, 0), material: MAT_METAL },         // cadre corps/couvercle
+      { geo: boxGeometry(0.035, 0.34, 0.035, 0.425, 0.34, 0.30), material: MAT_METAL },  // montants d'angle du corps (×4)
+      { geo: boxGeometry(0.035, 0.34, 0.035, -0.425, 0.34, 0.30), material: MAT_METAL },
+      { geo: boxGeometry(0.035, 0.34, 0.035, 0.425, 0.34, -0.30), material: MAT_METAL },
+      { geo: boxGeometry(0.035, 0.34, 0.035, -0.425, 0.34, -0.30), material: MAT_METAL },
+      { geo: boxGeometry(0.032, 0.08, 0.03, 0.462, 0.76, 0.32), material: MAT_METAL },  // montants d'angle du couvercle (×4)
+      { geo: boxGeometry(0.032, 0.08, 0.03, -0.462, 0.76, 0.32), material: MAT_METAL },
+      { geo: boxGeometry(0.032, 0.08, 0.03, 0.462, 0.76, -0.32), material: MAT_METAL },
+      { geo: boxGeometry(0.032, 0.08, 0.03, -0.462, 0.76, -0.32), material: MAT_METAL },
+      { geo: boxGeometry(0.16, 0.07, 0.02, 0, 0.36, 0.335), material: MAT_CRATE_DARK }, // encoche de poignée avant
+      { geo: boxGeometry(0.12, 0.035, 0.015, 0, 0.36, 0.35), material: MAT_METAL },     // poignée avant
+      { geo: boxGeometry(0.16, 0.07, 0.02, 0, 0.36, -0.335), material: MAT_CRATE_DARK },// encoche de poignée arrière
+      { geo: boxGeometry(0.12, 0.035, 0.015, 0, 0.36, -0.35), material: MAT_METAL },    // poignée arrière
+      { geo: boxGeometry(0.19, 0.13, 0.012, 0.16, 0.50, 0.33), material: MAT_LABEL },   // plaque de marquage avant
+      { geo: boxGeometry(0.018, 0.085, 0.006, 0.16, 0.50, 0.346), material: MAT_WHITE },// croix médicale (vertical)
+      { geo: boxGeometry(0.085, 0.018, 0.006, 0.16, 0.50, 0.346), material: MAT_WHITE },// croix médicale (horizontal)
+      { geo: boxGeometry(0.13, 0.02, 0.01, -0.20, 0.58, 0.34), material: MAT_CRATE_DARK }, // lignes de pochoir (×3)
+      { geo: boxGeometry(0.10, 0.02, 0.01, -0.20, 0.52, 0.34), material: MAT_CRATE_DARK },
+      { geo: boxGeometry(0.12, 0.02, 0.01, -0.20, 0.46, 0.34), material: MAT_CRATE_DARK },
+      { geo: boxGeometry(0.035, 0.015, 0.36, 0.28, 0.855, 0), material: MAT_METAL },     // sangle métallique couvercle droite
+      { geo: boxGeometry(0.035, 0.015, 0.36, -0.28, 0.855, 0), material: MAT_METAL },    // sangle métallique couvercle gauche
+      { geo: boxGeometry(0.006, 0.012, 0.08, 0.452, 0.44, 0.18), material: MAT_LABEL },  // cadre de pochoir latéral (haut)
+      { geo: boxGeometry(0.006, 0.012, 0.08, 0.452, 0.28, 0.18), material: MAT_LABEL },  // cadre de pochoir latéral (bas)
+      { geo: boxGeometry(0.006, 0.05, 0.012, 0.452, 0.36, 0.10), material: MAT_LABEL },  // cadre de pochoir latéral (gauche)
+      { geo: boxGeometry(0.006, 0.05, 0.012, 0.452, 0.36, 0.26), material: MAT_LABEL },  // cadre de pochoir latéral (droite)
+      { geo: boxGeometry(0.006, 0.05, 0.012, 0.452, 0.36, 0.18), material: MAT_LABEL },  // barre centrale du pochoir
+    ],
+  },
+  // Générateur électrique industriel (~1.35×1.0×0.75 m): pieds + châssis + moteur + réservoir + arceau + panneau (31 primitives, 1 mesh)
+  industrial_generator: {
+    name: 'IndustrialGenerator',
+    prims: [
+      { geo: boxGeometry(0.05, 0.025, 0.05, 0.6, 0.025, 0.3), material: MAT_GEN_DARK },   // pieds (×4) 0..0.05
+      { geo: boxGeometry(0.05, 0.025, 0.05, -0.6, 0.025, 0.3), material: MAT_GEN_DARK },
+      { geo: boxGeometry(0.05, 0.025, 0.05, 0.6, 0.025, -0.3), material: MAT_GEN_DARK },
+      { geo: boxGeometry(0.05, 0.025, 0.05, -0.6, 0.025, -0.3), material: MAT_GEN_DARK },
+      { geo: boxGeometry(0.675, 0.04, 0.375, 0, 0.07, 0), material: MAT_GEN_DARK },       // châssis-baie 1.35×0.08×0.75 → 0.11
+      { geo: boxGeometry(0.65, 0.26, 0.35, 0, 0.37, 0), material: MAT_GEN_BODY },         // châssis principal 1.3×0.52×0.7 → 0.63
+      { geo: boxGeometry(0.5, 0.18, 0.02, -0.15, 0.38, 0.36), material: MAT_GEN_DARK },   // panneau avant 1.0×0.36
+      { geo: boxGeometry(0.45, 0.02, 0.015, -0.15, 0.16, 0.36), material: MAT_GEN_ACCENT }, // bande de signalisation avant
+      { geo: boxGeometry(0.15, 0.1, 0.01, 0.1, 0.45, 0.39), material: MAT_GEN_ACCENT },   // plaque de commande avant
+      { geo: boxGeometry(0.02, 0.08, 0.02, -0.45, 0.5, 0.39), material: MAT_METAL },      // montant de poignée (×2)
+      { geo: boxGeometry(0.02, 0.08, 0.02, -0.25, 0.5, 0.39), material: MAT_METAL },
+      { geo: boxGeometry(0.11, 0.02, 0.02, -0.35, 0.58, 0.4), material: MAT_METAL },      // barre de poignée avant
+      { geo: boxGeometry(0.28, 0.22, 0.3, -0.3, 0.65, 0), material: MAT_GEN_BODY },       // moteur/groupe central 0.56×0.44×0.6 → 0.87
+      { geo: boxGeometry(0.2, 0.04, 0.22, -0.3, 0.89, 0), material: MAT_METAL },          // culasse moteur → 0.93
+      { geo: boxGeometry(0.045, 0.22, 0.06, 0.025, 0.7, 0.18), material: MAT_METAL },     // tuyau d'échappement 0.48..0.92
+      { geo: boxGeometry(0.06, 0.03, 0.06, 0.025, 0.935, 0.18), material: MAT_GEN_DARK }, // embout d'échappement → 0.965
+      { geo: boxGeometry(0.28, 0.18, 0.26, 0.35, 0.72, 0), material: MAT_GEN_BODY },      // réservoir/bloc supérieur 0.56×0.36×0.52 → 0.90
+      { geo: boxGeometry(0.22, 0.03, 0.2, 0.35, 0.915, 0), material: MAT_GEN_DARK },      // capot réservoir → 0.945
+      { geo: boxGeometry(0.15, 0.015, 0.006, 0.35, 0.72, 0.266), material: MAT_WHITE },   // marquage réservoir
+      { geo: boxGeometry(0.03, 0.275, 0.03, 0.64, 0.695, 0.34), material: MAT_METAL },    // montants d'arceau avant (×2) 0.42..0.97
+      { geo: boxGeometry(0.03, 0.275, 0.03, 0.64, 0.695, -0.34), material: MAT_METAL },
+      { geo: boxGeometry(0.03, 0.275, 0.03, -0.64, 0.695, 0.34), material: MAT_METAL },   // montants d'arceau arrière (×2)
+      { geo: boxGeometry(0.03, 0.275, 0.03, -0.64, 0.695, -0.34), material: MAT_METAL },
+      { geo: boxGeometry(0.655, 0.015, 0.015, 0, 0.985, 0.34), material: MAT_METAL },     // arceau supérieur (×4 barres) → 1.0
+      { geo: boxGeometry(0.655, 0.015, 0.015, 0, 0.985, -0.34), material: MAT_METAL },
+      { geo: boxGeometry(0.015, 0.015, 0.355, 0.64, 0.985, 0), material: MAT_METAL },
+      { geo: boxGeometry(0.015, 0.015, 0.355, -0.64, 0.985, 0), material: MAT_METAL },
+      { geo: boxGeometry(0.01, 0.1, 0.15, 0.66, 0.42, 0), material: MAT_GEN_DARK },       // panneau de contrôle latéral (face +X)
+      { geo: boxGeometry(0.006, 0.012, 0.08, 0.672, 0.46, -0.02), material: MAT_WHITE },  // lignes de pochoir (×2)
+      { geo: boxGeometry(0.006, 0.012, 0.08, 0.672, 0.4, -0.02), material: MAT_WHITE },
+      { geo: boxGeometry(0.008, 0.02, 0.02, 0.672, 0.36, 0.08), material: MAT_GEN_ACCENT },// voyant panneau
     ],
   },
 };
